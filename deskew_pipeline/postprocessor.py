@@ -78,6 +78,11 @@ class PostProcessor:
         Then de-hues any residual background-chroma fringe (pink/magenta halo from colored
         canvases survives color propagation because the fringe pixels dominate their own
         3x3 neighborhood — measured 2476/2924 edge px pink on a pink-background cutout).
+
+        NOTE: the reference chroma comes from the LOCAL 9px window, not deep interior:
+        for cutouts whose mask includes a deep background margin (multi-hue backgrounds),
+        interior-only references average the wrong colors. Deep margins are handled by
+        the pipeline's own mask cleanup, not here.
         """
         core_mask = (alpha >= 220).astype(np.uint8)
         if not np.any(core_mask):
@@ -115,16 +120,22 @@ class PostProcessor:
         # 9px-neighborhood median is a DIFFERENT hue family, pull it toward the neighborhood
         # chroma. Conservative: only fires where local median is confident.
         band = (alpha > 40) & (alpha < 250)
-        # Include the 2px opaque ring adjacent to the band: the worst fringe is fully opaque
-        # edge px (measured: 2476 fringe px were alpha>=250 while band had only 448).
-        edge_ring = cv2.dilate(band.astype(np.uint8), np.ones((5, 5), np.uint8)) > 0
+        # Include a 6px opaque ring adjacent to the band: the worst fringe extends into fully
+        # opaque px (measured on the wolf-girl cutout: 673 green fringe px at alpha=255 beyond
+        # the 5px ring — deep enough to survive a 5px dilation).
+        edge_ring = cv2.dilate(band.astype(np.uint8), np.ones((13, 13), np.uint8)) > 0
         band = band | (edge_ring & (alpha >= 250))
         if np.any(band):
             hsv = cv2.cvtColor(clean_rgb, cv2.COLOR_RGB2HSV)
             hue = hsv[:, :, 0].astype(np.float32)
             sat = hsv[:, :, 1].astype(np.float32)
+            # Reference chroma = INTERIOR art (>=12px inside the opaque region), not the local
+            # 9px window: fringe rings 10-30px deep make a 9px window mostly fringe itself
+            # (measured on the wolf-girl cutout: ring5 hue=101 green vs core20 hue=15 art).
+            dist_in = cv2.distanceTransform((alpha >= 250).astype(np.uint8), cv2.DIST_L2, 5)
+            interior = (alpha >= 250) & (dist_in >= 12)
+            art_only = interior.astype(np.float32)
             # neighborhood median hue over art (excluding the fringe band itself)
-            art_only = (alpha >= 250).astype(np.float32)
             hue_weighted = hue * art_only * (sat / 255.0)
             hue_med = cv2.blur(hue_weighted, (9, 9)) / np.maximum(cv2.blur(art_only * (sat / 255.0), (9, 9)), 1e-3)
             sat_med = cv2.blur(sat * art_only, (9, 9)) / np.maximum(cv2.blur(art_only, (9, 9)), 1e-3)
