@@ -1,20 +1,9 @@
-# Byte-compiled / optimized / DLL files
 __pycache__/
-*.py[cod]
-*$py.class
-
-# Output and results
-output_results/
-
-# Environments
-.env
+*.pyc
 .venv/
-env/
-venv/
-ENV/
-
-# OS and IDE files
+eval/
+output_results/
+tests/fixtures/
+*.onnx
+*.pt
 .DS_Store
-Thumbs.db
-.vscode/
-.idea/

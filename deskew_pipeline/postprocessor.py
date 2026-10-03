@@ -75,6 +75,9 @@ class PostProcessor:
         """
         Propagates solid foreground colors outward into semi-transparent boundary pixels
         without sampling unmasked background or creating cyan/dark halos.
+        Then de-hues any residual background-chroma fringe (pink/magenta halo from colored
+        canvases survives color propagation because the fringe pixels dominate their own
+        3x3 neighborhood — measured 2476/2924 edge px pink on a pink-background cutout).
         """
         core_mask = (alpha >= 220).astype(np.uint8)
         if not np.any(core_mask):
@@ -106,6 +109,39 @@ class PostProcessor:
 
             known[frontier] = 1
             unknown[frontier] = 0
+
+        # Chroma de-fringe: in the semi-transparent band, if a pixel's hue matches the
+        # background-canvas hue family (pink/magenta H 130-185, measured signature) while the
+        # 9px-neighborhood median is a DIFFERENT hue family, pull it toward the neighborhood
+        # chroma. Conservative: only fires where local median is confident.
+        band = (alpha > 40) & (alpha < 250)
+        # Include the 2px opaque ring adjacent to the band: the worst fringe is fully opaque
+        # edge px (measured: 2476 fringe px were alpha>=250 while band had only 448).
+        edge_ring = cv2.dilate(band.astype(np.uint8), np.ones((5, 5), np.uint8)) > 0
+        band = band | (edge_ring & (alpha >= 250))
+        if np.any(band):
+            hsv = cv2.cvtColor(clean_rgb, cv2.COLOR_RGB2HSV)
+            hue = hsv[:, :, 0].astype(np.float32)
+            sat = hsv[:, :, 1].astype(np.float32)
+            # neighborhood median hue over art (excluding the fringe band itself)
+            art_only = (alpha >= 250).astype(np.float32)
+            hue_weighted = hue * art_only * (sat / 255.0)
+            hue_med = cv2.blur(hue_weighted, (9, 9)) / np.maximum(cv2.blur(art_only * (sat / 255.0), (9, 9)), 1e-3)
+            sat_med = cv2.blur(sat * art_only, (9, 9)) / np.maximum(cv2.blur(art_only, (9, 9)), 1e-3)
+            # fringe: any saturated edge px whose hue differs from the local art hue
+            # (covers pink halo AND rainbow fringes from multi-hue backgrounds)
+            is_fringe = (sat > 30) & (sat_med > 20)
+            hue_dist = np.abs(hue_med - hue)
+            hue_dist = np.minimum(hue_dist, 180 - hue_dist)  # circular
+            local_far = (hue_dist > 25) & (sat_med > 20)
+            fix = band & is_fringe & local_far
+            if np.any(fix):
+                # replace fringe chroma with the local art chroma, keep original value
+                hh, ss, vv = cv2.split(hsv)
+                hh[fix] = hue_med[fix].astype(np.uint8)
+                ss[fix] = np.maximum(ss[fix], (sat_med[fix] * 0.6).astype(np.uint8))
+                fixed = cv2.cvtColor(cv2.merge([hh, ss, vv]), cv2.COLOR_HSV2RGB)
+                clean_rgb[fix] = fixed[fix]
 
         return clean_rgb
 

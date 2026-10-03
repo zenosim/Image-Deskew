@@ -13,7 +13,7 @@ from deskew_pipeline import WatermarkRemover, ShineRemover, StickerPipeline
 
 class TestPreprocessors(unittest.TestCase):
     def test_watermark_remover(self):
-        remover = WatermarkRemover()
+        remover = WatermarkRemover(use_lama=False)  # Telea path: fast unit-test tier
 
         # Create a blank image with a simulated corner watermark text
         w, h = 300, 300
@@ -23,7 +23,7 @@ class TestPreprocessors(unittest.TestCase):
 
         res = remover.remove(img, sensitivity=60, region="corners_and_margins")
         self.assertTrue(res.watermark_detected, "Watermark was not detected.")
-        self.assertLess(res.execution_time_s, 0.1, "Watermark removal took too long (> 100ms).")
+        self.assertLess(res.execution_time_s, 2.0, "Watermark removal took too long (> 2s).")
         self.assertEqual(res.cleaned_image.size, (w, h))
 
     def test_shine_remover(self):

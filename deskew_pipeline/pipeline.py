@@ -378,8 +378,17 @@ class StickerPipeline:
             if is_quad_poly:
                 deskew_mode = "quad"
             else:
-                # 2. If not a quadrilateral, check for a dominant straight horizontal baseline cut (e.g. peeker sticker)
-                baseline_angle = self.deskewer.detect_flat_baseline_angle(deskew_mask)
+                # 2. If not a quadrilateral, check for a dominant straight horizontal baseline cut
+                # (e.g. peeker sticker). Gate on flat aspect: tall organic characters produce
+                # phantom 'hem' baselines (measured 10-11 deg on upright art) — never deskew those.
+                raw_rect = cv2.minAreaRect(max(contours, key=cv2.contourArea)) if contours else ((0, 0), (1, 1), 0)
+                (_, _), (prw, prh), _ = raw_rect
+                flat_aspect = max(prw, prh) / max(1.0, min(prw, prh))
+                baseline_angle = (
+                    self.deskewer.detect_flat_baseline_angle(deskew_mask)
+                    if flat_aspect >= 2.5
+                    else None
+                )
                 if baseline_angle is not None and abs(baseline_angle) >= 0.3:
                     deskew_mode = "baseline"
                 else:

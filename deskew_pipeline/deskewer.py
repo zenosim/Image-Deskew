@@ -168,8 +168,8 @@ class PerspectiveDeskewer:
 
         best_bin = max(bins.values(), key=lambda b: b['total_w'])
         span_x = max(best_bin['xs']) - min(best_bin['xs'])
-        min_span = max(40, int(w * 0.25))
-        min_len = max(45, int(w * 0.12))
+        min_span = max(40, int(w * 0.30))
+        min_len = max(45, int(w * 0.18))
 
         if span_x >= min_span and best_bin['raw_len'] >= min_len:
             return float(best_bin['weighted_a'] / best_bin['total_w'])
@@ -307,13 +307,31 @@ class PerspectiveDeskewer:
 
         h, w = mask.shape
 
-        # Strategy 1: Check for bottom cut baseline (peeker or sliced sticker base)
-        baseline_angle = self.detect_flat_baseline_angle(mask)
-        if baseline_angle is not None and abs(baseline_angle) >= 0.3:
-            return baseline_angle
-
-        # Strategy 2: Oriented Minimum Bounding Box of the sticker contour
+        # Shared compactness analysis: near-convex card-like masks are trustworthy for
+        # baseline + minAreaRect strategies; organic silhouettes (arms, props, hems) are not —
+        # measured on real art: upright characters produce 10-26 deg phantom readings.
         contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        largest = max(contours, key=cv2.contourArea) if contours else None
+        compact = False
+        if largest is not None and cv2.contourArea(largest) > 500:
+            rect0 = cv2.minAreaRect(largest)
+            (_, _), (rw0, rh0), _ = rect0
+            hull_area = max(1.0, cv2.contourArea(cv2.convexHull(largest)))
+            solidity = cv2.contourArea(largest) / hull_area
+            extent = cv2.contourArea(largest) / max(1.0, rw0 * rh0)
+            compact = solidity > 0.86 and extent > 0.55
+
+        # Strategy 1: bottom cut baseline — only for flat/peeker-style masks (wide relative to
+        # height). Tall organic characters never qualify: their 'straight hem' readings are pose.
+        if largest is not None:
+            (_, _), (rw0, rh0), _ = cv2.minAreaRect(largest)
+            flat_aspect = max(rw0, rh0) / max(1.0, min(rw0, rh0))
+            if flat_aspect >= 2.5:
+                baseline_angle = self.detect_flat_baseline_angle(mask)
+                if baseline_angle is not None and abs(baseline_angle) >= 0.3:
+                    return baseline_angle
+
+        # Strategy 2: Oriented Minimum Bounding Box (compact masks only).
         if contours:
             largest = max(contours, key=cv2.contourArea)
             if cv2.contourArea(largest) > 500:
@@ -324,8 +342,9 @@ class PerspectiveDeskewer:
                 else:
                     dev = ang + 90.0 if ang < 0 else ang - 90.0
 
-                # If within a reasonable tilt window (0.4 to 28 degrees)
-                if 0.4 <= abs(dev) <= 28.0:
+                # Compact near-card masks only; organic silhouettes always fail here (pose noise).
+                if compact and 0.4 <= abs(dev) <= 6.0:
+                    return -dev
                     return -dev
 
         # Strategy 3: Horizontal line segments (eyes, bangs, collar lines)
@@ -343,7 +362,9 @@ class PerspectiveDeskewer:
                     ang += 180
                 if abs(ang) <= 25.0:
                     horiz_angles.append(ang)
-            if len(horiz_angles) >= 3:
+            # Require >=4 lines AND tight agreement (std < 2.5 deg): pose edges (dress folds,
+            # leaning bodies) produce 2-3 stray lines that mimic tilt on upright art.
+            if len(horiz_angles) >= 5 and float(np.std(horiz_angles)) < 1.8:
                 median_ang = float(np.median(horiz_angles))
                 if abs(median_ang) >= 0.4:
                     return median_ang

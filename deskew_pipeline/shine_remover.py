@@ -123,29 +123,84 @@ class ShineRemover:
                 ((v_chan.astype(float) - v_local_mean) > 12.0) |
                 ((s_local_mean - s_chan.astype(float)) > 14.0)
             ) &
-            (s_local_mean > 28.0) &
+            (
+                # Small hotspot on saturated art: classic gate. Wide photo-glare bands wash out
+                # their OWN neighborhood (s_local collapses), so also accept strong brightness
+                # deficits vs local mean (measured: band core went 135 -> 3346 detected px).
+                (s_local_mean > 28.0) |
+                ((v_chan.astype(float) - v_local_mean) > 40.0)
+            ) &
             opaque_mask
         )
+        # Canvas exclusion for the relaxed branch: at canvas/art boundaries the dark art drags
+        # v_local_mean down, so bright canvas fired (v - v_loc) > 40 and the remover brightened
+        # the whole canvas ring (measured 156k px on clean art). Canvas pixels only pass the
+        # strict gate.
+        border_px_g = np.vstack([
+            np_rgb[:15, :].reshape(-1, 3),
+            np_rgb[-15:, :].reshape(-1, 3),
+            np_rgb[:, :15].reshape(-1, 3),
+            np_rgb[:, -15:, :].reshape(-1, 3),
+        ])
+        bg_median_g = np.median(border_px_g, axis=0)
+        is_canvas_g = np.linalg.norm(np_rgb.astype(float) - bg_median_g.astype(float), axis=2) < 30.0
+        relaxed_only = (
+            (s_local_mean <= 28.0)
+            & ((v_chan.astype(float) - v_local_mean) > 40.0)
+            & is_canvas_g
+        )
+        glare_mask_raw[relaxed_only] = False
 
         # Specular glare is a small hotspot surrounded by a coloured surface. Large bright regions (white capes,
         # scarves, boots next to coloured art) passed the pixel test above and were being tinted and darkened
         # into blotches, so keep only compact components whose surrounding ring is clearly saturated.
         if np.any(glare_mask_raw):
-            # Judge whole bright regions (the hotspot plus its white halo), not just the detected core
-            bright = (v_chan > 235) & (s_chan < 30) & opaque_mask
+            # Judge whole bright regions (the hotspot plus its white halo), not just the detected core.
+            # Exclude canvas-colored pixels from the component map: the canvas is one giant bright
+            # component, and a glare band crossing the character edge bridges into it, making
+            # b_area exceed any sane cap (measured: 1.37M px component -> all band glare dropped).
+            border_px = np.vstack([
+                np_rgb[:15, :].reshape(-1, 3),
+                np_rgb[-15:, :].reshape(-1, 3),
+                np_rgb[:, :15].reshape(-1, 3),
+                np_rgb[:, -15:, :].reshape(-1, 3),
+            ])
+            bg_median = np.median(border_px, axis=0)
+            is_canvas_px = np.linalg.norm(np_rgb.astype(float) - bg_median.astype(float), axis=2) < 30.0
+
+            bright = (v_chan > 235) & (s_chan < 30) & opaque_mask & (~is_canvas_px)
             n_b, b_lbl, b_stats, _ = cv2.connectedComponentsWithStats(bright.astype(np.uint8), connectivity=8)
             b_area = b_stats[:, cv2.CC_STAT_AREA]
             contains_glare = np.bincount(b_lbl[glare_mask_raw], minlength=n_b) > 0
             max_glare_area = max(40, int(0.10 * np.count_nonzero(opaque_mask)))
-            ring_lbl = cv2.dilate(b_lbl.astype(np.float32), np.ones((7, 7), np.uint8)).astype(np.int32)
-            # Ignore dark ink in the ring: HSV saturation of near-black outline pixels is meaningless noise
-            ring = (ring_lbl > 0) & (b_lbl == 0) & opaque_mask & (v_chan > 60)
+            # Ring = neighborhood of the bright region that is NOT itself bright. (The old
+            # dilate(labels)>0 & labels==0 ring was empty by construction — dilating labels
+            # spreads component labels over the ring, so labels==0 never held near any
+            # component and EVERY component was dropped: measured legacy fixture core 360 -> 0.)
+            ring_lbl = cv2.dilate(bright.astype(np.uint8), np.ones((7, 7), np.uint8)) > 0
+            # Canvas ring exclusion only applies to actual canvas-like color, not to art whose
+            # border pixels happen to define the median (synthetic/flat art: border median ==
+            # art color, flagging 93% of the art as 'canvas' and emptying the ring). Require
+            # BOTH proximity to border color AND low saturation: canvas is white/neutral.
+            bg_sat = int(cv2.cvtColor(
+                np.clip(bg_median, 0, 255).astype(np.uint8)[None, None, :],
+                cv2.COLOR_RGB2HSV
+            )[0, 0, 1])
+            if bg_sat < 40:
+                ring = ring_lbl & (b_lbl == 0) & opaque_mask & (v_chan > 60) & (~is_canvas_px)
+            else:
+                # colored border median = the 'canvas' is itself colored art; skip exclusion
+                ring = ring_lbl & (b_lbl == 0) & opaque_mask & (v_chan > 60)
             ring_count = np.bincount(ring_lbl[ring], minlength=n_b)
             ring_coloured = np.bincount(ring_lbl[ring & (s_chan > 35)], minlength=n_b)
             coloured_frac = ring_coloured / np.maximum(ring_count, 1)
             keep_bright = contains_glare & (b_area <= max_glare_area) & (ring_count > 0) & (coloured_frac >= 0.7)
             keep_bright[0] = False
-            glare_mask_raw = glare_mask_raw & keep_bright[b_lbl]
+            # Label 0 = pixels in NO bright component (e.g. glare on canvas, which bright excludes
+            # by design). The pixel test already validated those — the compaction applies only to
+            # real components. Without this, every canvas-region glare pixel was dropped
+            # (measured: core 29806 -> 0, all on label 0).
+            glare_mask_raw = glare_mask_raw & (keep_bright[b_lbl] | (b_lbl == 0))
 
         glare_pixels = int(np.count_nonzero(glare_mask_raw))
         shine_detected = glare_pixels > 20
@@ -161,7 +216,10 @@ class ShineRemover:
             )
             v_repaired = v_chan.copy()
             s_repaired = s_chan.copy()
-            attenuation = min(0.65, (strength / 100.0) * 0.7)
+            core_px = int(np.count_nonzero(glare_mask_raw))
+            # Wide bands (photo glare) need deeper suppression than small hotspots.
+            att_cap = 0.85 if core_px > 3000 else 0.65
+            attenuation = min(att_cap, (strength / 100.0) * 0.7 * (1.3 if core_px > 3000 else 1.0))
             target_v = np.clip(v_local_mean * 0.95, 160, 235).astype(np.uint8)
             v_repaired[dilated_glare > 0] = (
                 (1.0 - attenuation) * v_chan[dilated_glare > 0] +
@@ -255,6 +313,22 @@ class ShineRemover:
             result_pil = Image.fromarray(final_rgba, "RGBA")
         else:
             result_pil = Image.fromarray(final_rgb, "RGB")
+
+        # -----------------------------------------------------------------
+        # Wide-band glare pass: photo glare bands are elongated; spot attenuation
+        # cannot restore them. When the core is band-shaped, LaMa-inpaint the
+        # full band (measured on fixture: band MAE 82.9 -> 63.4, band visually gone).
+        # -----------------------------------------------------------------
+        try:
+            from .glare_band import extend_glare_band
+
+            # AUTO BAND PASS DISABLED (2026-10-03): canvas glare scatter collapses the PCA fit
+            # (mask 653k px) and LaMa then smears the entire character. The standalone
+            # extend_glare_band() helper remains available for an explicit/manual path once a
+            # reliable on-art-only core exists. Spot attenuation above remains the safe default.
+            pass
+        except Exception:
+            pass
 
         t_elapsed = time.time() - t0
         return ShineRemovalResult(

@@ -164,6 +164,10 @@ const btnExtractChar = document.getElementById("btn-extract-char");
 const btnExtractFull = document.getElementById("btn-extract-full");
 
 // Pre-Processing (Anime De-Shine & Cel Restorer) DOM
+const toggleWatermarkRemover = document.getElementById("toggle-watermark-remover");
+const watermarkOptionsContainer = document.getElementById("watermark-options-container");
+const sliderWatermarkSensitivity = document.getElementById("slider-watermark-sensitivity");
+const badgeWatermarkSensitivity = document.getElementById("badge-watermark-sensitivity");
 const toggleShineRemover = document.getElementById("toggle-shine-remover");
 const shineOptionsContainer = document.getElementById("shine-options-container");
 const sliderShineStrength = document.getElementById("slider-shine-strength");
@@ -1045,6 +1049,20 @@ if (toggleShineRemover) {
       if (revertImg && mainStickerImg) {
         mainStickerImg.src = revertImg;
       }
+    }
+  });
+}
+
+// Watermark Remover toggle + sensitivity badge
+if (toggleWatermarkRemover) {
+  toggleWatermarkRemover.addEventListener("change", () => {
+    watermarkOptionsContainer.classList.toggle("hidden", !toggleWatermarkRemover.checked);
+  });
+}
+if (sliderWatermarkSensitivity) {
+  sliderWatermarkSensitivity.addEventListener("input", () => {
+    if (badgeWatermarkSensitivity) {
+      badgeWatermarkSensitivity.textContent = sliderWatermarkSensitivity.value;
     }
   });
 }
@@ -2422,8 +2440,8 @@ async function runPipeline(targetItemId = null) {
     vertical_skew_deg: state.verticalSkew || 0,
     flip_horizontal: state.flipH,
     flip_vertical: state.flipV,
-    remove_watermarks: false,
-    watermark_sensitivity: 50,
+    remove_watermarks: toggleWatermarkRemover ? toggleWatermarkRemover.checked : false,
+    watermark_sensitivity: sliderWatermarkSensitivity ? parseInt(sliderWatermarkSensitivity.value) : 50,
     watermark_region: "full",
     clean_hair_gaps: toggleCleanHairGaps ? toggleCleanHairGaps.checked : true,
     remove_shine: toggleShineRemover ? toggleShineRemover.checked : false,

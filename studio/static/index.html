@@ -1914,6 +1914,25 @@ input:checked + .switch-slider::before {
           <!-- Anime De-Shine & Cel Restorer -->
           <div class="switch-row">
             <div>
+              <div class="switch-title">Watermark Remover</div>
+              <div class="switch-desc">Detects &amp; inpaints text stamps/watermarks (LaMa). Off = never touch the image</div>
+            </div>
+            <label class="switch-ui">
+              <input type="checkbox" id="toggle-watermark-remover">
+              <span class="switch-slider"></span>
+            </label>
+          </div>
+
+          <div class="slider-field hidden" id="watermark-options-container" style="margin-top: 8px;">
+            <div class="slider-meta">
+              <label for="slider-watermark-sensitivity">Detection Sensitivity</label>
+              <span class="badge-val" id="badge-watermark-sensitivity">50</span>
+            </div>
+            <input type="range" id="slider-watermark-sensitivity" min="10" max="100" value="50" class="studio-range">
+          </div>
+
+          <div class="switch-row">
+            <div>
               <div class="switch-title">Anime De-Shine & Cel Restorer</div>
               <div class="switch-desc">Removes specular glare & restores clean anime cel colors</div>
             </div>

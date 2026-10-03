@@ -66,11 +66,20 @@ class BigLamaInpainter:
         self._ensure_engine()
 
     def _ensure_engine(self):
-        """Load the appropriate engine (lazy singleton)."""
+        """Load the appropriate engine (lazy singleton).
+
+        Falls back to the Big-LaMa ONNX engine when the anime TorchScript engine is
+        requested but torch is unavailable (e.g. CPU-only installs) — ONNX Runtime
+        covers both CPU and GPU through its execution providers.
+        """
         if self.model_type == "anime":
-            self._ensure_anime_engine()
-        else:
-            self._ensure_onnx_engine()
+            try:
+                self._ensure_anime_engine()
+                return
+            except ImportError:
+                # torch missing: degrade gracefully to the ONNX engine
+                self.model_type = "general"
+        self._ensure_onnx_engine()
 
     @classmethod
     def _ensure_anime_engine(cls):
@@ -510,13 +519,18 @@ class BigLamaInpainter:
             tile_blend_mask = (tile_mask > 0).astype(np.float64)
             effective_weight = tile_weight * tile_blend_mask
             
-            # Map into region-local coordinates
+            # Map into region-local coordinates, clipped to the region bounds (border tiles
+            # extend past the region; accumulate only the overlapping part).
             ry0 = ty0 - region_y0
             rx0 = tx0 - region_x0
-            ry1 = ty1 - region_y0
-            rx1 = tx1 - region_x0
-            accum[ry0:ry1, rx0:rx1] += tile_result.astype(np.float64) * effective_weight[:, :, None]
-            weight[ry0:ry1, rx0:rx1] += effective_weight
+            ry1 = min(ty1, region_y1) - region_y0
+            rx1 = min(tx1, region_x1) - region_x0
+            th_clip, tw_clip = ry1 - ry0, rx1 - rx0
+            accum[ry0:ry1, rx0:rx1] += (
+                tile_result[:th_clip, :tw_clip].astype(np.float64)
+                * effective_weight[:th_clip, :tw_clip, None]
+            )
+            weight[ry0:ry1, rx0:rx1] += effective_weight[:th_clip, :tw_clip]
         
         # Merge tiles into region
         final_rgb = rgb_arr.copy()

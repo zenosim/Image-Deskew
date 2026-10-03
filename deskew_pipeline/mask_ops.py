@@ -123,6 +123,17 @@ def apply_character_hint(mask: np.ndarray, hint: np.ndarray) -> np.ndarray:
     keep |= hint_bool & (mask > 0)
     out = mask.copy()
     out[~keep] = 0
+    # Drop weakly-attached components: background patches whose overlap with the user's hint
+    # is tiny relative to their size are residue stuck to the crop/hint boundary (measured:
+    # hint-rect edges kept full background slivers as opaque px).
+    if np.any(out):
+        num2, lab2, st2, _ = cv2.connectedComponentsWithStats((out > 0).astype(np.uint8), connectivity=8)
+        for i in range(1, num2):
+            comp = lab2 == i
+            overlap = int(np.count_nonzero(comp & hint_bool))
+            comp_area = int(st2[i, cv2.CC_STAT_AREA])
+            if overlap < 0.20 * comp_area and comp_area > 50:
+                out[comp] = 0
     return out
 
 
