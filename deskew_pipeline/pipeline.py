@@ -57,6 +57,7 @@ class PipelineResult:
     watermark_cleaned: Optional[Image.Image] = None
     cel_restored: Optional[Image.Image] = None
     color_enhanced: Optional[Image.Image] = None
+    grok_edited: Optional[Image.Image] = None
 
     def save(self, output_path: str):
         """Saves the final clean transparent PNG."""
@@ -113,6 +114,8 @@ class StickerPipeline:
         remove_watermarks: bool = False,
         watermark_sensitivity: int = 50,
         watermark_region: str = "corners_and_margins",
+        grok_ai_edit: bool = False,
+        grok_api_key: str = "",
         remove_shine: bool = False,
         shine_strength: int = 60,
         color_tiers: int = 40,
@@ -227,6 +230,8 @@ class StickerPipeline:
         self.remove_watermarks = remove_watermarks
         self.watermark_sensitivity = watermark_sensitivity
         self.watermark_region = watermark_region
+        self.grok_ai_edit = grok_ai_edit
+        self.grok_api_key = grok_api_key
         self.remove_shine = remove_shine
         self.shine_strength = shine_strength
         self.color_tiers = color_tiers
@@ -309,6 +314,30 @@ class StickerPipeline:
             watermark_cleaned_img = wm_res.cleaned_image
             t_wm = wm_res.execution_time_s
             wm_detected = wm_res.watermark_detected
+
+        # Pre-Processing Stage 0: Grok AI edit (replaces watermark/shine/color-pop stages —
+        # the single prompt already handles watermark removal, glare cleanup and color pop).
+        grok_edited_img = None
+        if self.grok_ai_edit:
+            if progress_callback:
+                progress_callback(6, "Grok AI: editing artwork (watermarks, background, color)...")
+            from .grok_edit import grok_edit_image
+            t0g = time.time()
+            edited, err = grok_edit_image(raw_img, self.grok_api_key)
+            if edited is not None:
+                grok_edited_img = edited
+                current_prep_img = edited
+                # The Grok edit covers everything the local pre-stages would do; skip them
+                # so the model's cleaned artwork is what segmentation sees.
+                self.remove_watermarks = False
+                self.remove_shine = False
+                if progress_callback:
+                    progress_callback(18, f"Grok AI edit complete ({time.time() - t0g:.0f}s)")
+            else:
+                # Fail open to the local pipeline rather than aborting the job
+                print(f"[StickerPipeline] Grok edit failed, continuing locally: {err}")
+                if progress_callback:
+                    progress_callback(18, "Grok edit failed — using local pipeline")
 
         # System 1: Background & Foreground Segmentor (receives clean pre-processed image)
         if progress_callback:
@@ -585,6 +614,7 @@ class StickerPipeline:
             "color_pop_metadata": color_pop_meta,
             "clean_hair_gaps": self.clean_hair_gaps,
             "selected_deskew_mode": deskew_mode,
+            "grok_ai_edit": bool(self.grok_ai_edit and grok_edited_img is not None),
             "pca_align_enabled": self.pca_align,
             "pca_alignment_metadata": pca_meta,
             "diecut_border_added": self.add_diecut_border,
@@ -609,6 +639,7 @@ class StickerPipeline:
             seg_result=seg_res,
             watermark_cleaned=watermark_cleaned_img,
             cel_restored=cel_restored_img,
-            color_enhanced=color_enhanced_img
+            color_enhanced=color_enhanced_img,
+            grok_edited=grok_edited_img
         )
 

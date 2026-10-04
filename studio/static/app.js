@@ -165,6 +165,13 @@ const btnExtractFull = document.getElementById("btn-extract-full");
 
 // Pre-Processing (Anime De-Shine & Cel Restorer) DOM
 const toggleWatermarkRemover = document.getElementById("toggle-watermark-remover");
+const toggleGrokEdit = document.getElementById("toggle-grok-edit");
+const grokOptionsContainer = document.getElementById("grok-options-container");
+const inputGrokApiKey = document.getElementById("input-grok-api-key");
+const btnGrokSaveKey = document.getElementById("btn-grok-save-key");
+const btnGrokClearKey = document.getElementById("btn-grok-clear-key");
+const grokKeyStatus = document.getElementById("grok-key-status");
+const pillStageGrok = document.getElementById("pill-stage-grok");
 const watermarkOptionsContainer = document.getElementById("watermark-options-container");
 const sliderWatermarkSensitivity = document.getElementById("slider-watermark-sensitivity");
 const badgeWatermarkSensitivity = document.getElementById("badge-watermark-sensitivity");
@@ -909,6 +916,7 @@ function clearAllQueue() {
 }
 
 if (btnClearWorkspace) btnClearWorkspace.addEventListener("click", clearWorkspace);
+const btnClearSample = document.getElementById("btn-clear-sample");
 if (btnClearSample) btnClearSample.addEventListener("click", clearWorkspace);
 if (btnClearQueue) btnClearQueue.addEventListener("click", clearAllQueue);
 if (btnProcessQueue) btnProcessQueue.addEventListener("click", processAllQueue);
@@ -1057,6 +1065,73 @@ if (toggleShineRemover) {
 if (toggleWatermarkRemover) {
   toggleWatermarkRemover.addEventListener("change", () => {
     watermarkOptionsContainer.classList.toggle("hidden", !toggleWatermarkRemover.checked);
+  });
+}
+
+// Grok AI Edit toggle + API key management
+async function refreshGrokKeyStatus() {
+  if (!grokKeyStatus) return;
+  try {
+    const res = await fetch("/api/grok-key", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ action: "status" })
+    });
+    const data = await res.json();
+    grokKeyStatus.textContent = data.configured
+      ? "✓ API key saved on server"
+      : "No key saved — paste your xAI key above";
+  } catch (_) {
+    grokKeyStatus.textContent = "";
+  }
+}
+if (toggleGrokEdit) {
+  toggleGrokEdit.addEventListener("change", () => {
+    grokOptionsContainer.classList.toggle("hidden", !toggleGrokEdit.checked);
+    if (!toggleGrokEdit.checked) return;
+    refreshGrokKeyStatus();
+    if (toggleGrokEdit.checked && (!toggleWatermarkRemover || !toggleWatermarkRemover.checked)) {
+      // Grok handles watermark removal itself; nothing else needed, just inform once
+      console.log("[Grok] AI edit enabled — replaces local watermark/shine pre-stages.");
+    }
+  });
+}
+if (btnGrokSaveKey) {
+  btnGrokSaveKey.addEventListener("click", async () => {
+    if (!inputGrokApiKey || !inputGrokApiKey.value.trim()) {
+      if (grokKeyStatus) grokKeyStatus.textContent = "⚠️ Paste a key first";
+      return;
+    }
+    try {
+      const res = await fetch("/api/grok-key", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "set", api_key: inputGrokApiKey.value.trim() })
+      });
+      const data = await res.json();
+      if (data.success) {
+        inputGrokApiKey.value = "";
+        if (grokKeyStatus) grokKeyStatus.textContent = "✓ API key saved on server";
+        showToast("🔑 Grok API key saved");
+      } else {
+        if (grokKeyStatus) grokKeyStatus.textContent = `⚠️ ${data.error || "Save failed"}`;
+      }
+    } catch (_) {
+      if (grokKeyStatus) grokKeyStatus.textContent = "⚠️ Could not reach server";
+    }
+  });
+}
+if (btnGrokClearKey) {
+  btnGrokClearKey.addEventListener("click", async () => {
+    try {
+      await fetch("/api/grok-key", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "clear" })
+      });
+      if (grokKeyStatus) grokKeyStatus.textContent = "No key saved — paste your xAI key above";
+      showToast("🗑️ Grok API key removed");
+    } catch (_) {}
   });
 }
 if (sliderWatermarkSensitivity) {
@@ -2114,6 +2189,9 @@ function updateDisplayView() {
   if (!hasLoadedImage()) return;
 
   // Show/hide intermediate pre-processing pills if stages exist
+  if (pillStageGrok) {
+    pillStageGrok.classList.toggle("hidden", !state.stages["grok_edited"]);
+  }
   if (pillStageWatermark) {
     pillStageWatermark.classList.toggle("hidden", !state.stages["watermark_cleaned"]);
   }
@@ -2443,6 +2521,7 @@ async function runPipeline(targetItemId = null) {
     remove_watermarks: toggleWatermarkRemover ? toggleWatermarkRemover.checked : false,
     watermark_sensitivity: sliderWatermarkSensitivity ? parseInt(sliderWatermarkSensitivity.value) : 50,
     watermark_region: "full",
+    grok_ai_edit: toggleGrokEdit ? toggleGrokEdit.checked : false,
     clean_hair_gaps: toggleCleanHairGaps ? toggleCleanHairGaps.checked : true,
     remove_shine: toggleShineRemover ? toggleShineRemover.checked : false,
     shine_strength: sliderShineStrength ? parseInt(sliderShineStrength.value) : 60,
@@ -4493,6 +4572,9 @@ function saveStudioSettings() {
       colorTiers: sliderColorTiers ? sliderColorTiers.value : "40",
       flatCel: toggleFlatCel ? toggleFlatCel.checked : false,
 
+      // Grok AI Edit
+      grokEdit: toggleGrokEdit ? toggleGrokEdit.checked : false,
+
       // Color Pop & AI LoRA
       colorPop: toggleColorPop ? toggleColorPop.checked : false,
       colorPopPreset: selectColorPopPreset ? selectColorPopPreset.value : "anime_pop",
@@ -4588,6 +4670,12 @@ function restoreStudioSettings() {
       if (badgeColorTiers) badgeColorTiers.textContent = `${s.colorTiers} Bands`;
     }
     if (toggleFlatCel && s.flatCel !== undefined) toggleFlatCel.checked = !!s.flatCel;
+
+    // Grok AI Edit
+    if (toggleGrokEdit && s.grokEdit !== undefined) {
+      toggleGrokEdit.checked = !!s.grokEdit;
+      if (grokOptionsContainer) grokOptionsContainer.classList.toggle("hidden", !toggleGrokEdit.checked);
+    }
 
     // 3. Color Pop & AI LoRA
     if (toggleColorPop && s.colorPop !== undefined) {
@@ -4720,6 +4808,7 @@ function restoreStudioSettings() {
 [
   selectAiModel, toggleCleanHairGaps, toggleSmudgeCleaner, sliderSmudgeSensitivity, sliderAlphaThreshold,
   selectDeskewMode, toggleShineRemover, sliderShineStrength, sliderColorTiers, toggleFlatCel,
+  toggleGrokEdit,
   toggleColorPop, selectColorPopPreset, sliderColorPopVibrance, sliderColorPopClarity,
   toggleAiLora, selectAiLoraPreset, toggleBorder, selectHighlightMode, pickerHighlightColor,
   sliderBorderWidth, sliderBorderSmoothing, sliderGlowRadius, toggleSuperRes, selectEnhancerModel, selectEnhancerScale,

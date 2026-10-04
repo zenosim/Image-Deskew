@@ -1911,6 +1911,33 @@ input:checked + .switch-slider::before {
             <span>Pre-Processing (Clean Artwork First)</span>
           </div>
 
+          <!-- Grok AI Edit (xAI) -->
+          <div class="switch-row">
+            <div>
+              <div class="switch-title" style="color: #93c5fd; display: flex; align-items: center; gap: 6px;">
+                <span>🤖 Grok AI Edit</span>
+                <span class="badge-val" style="background: rgba(59, 130, 246, 0.2); color: #93c5fd; font-size: 0.65rem; padding: 1px 6px;">Cloud</span>
+              </div>
+              <div class="switch-desc">Sends artwork to Grok: erases watermarks, isolates character on white, gentle color pop. Replaces local watermark/shine stages</div>
+            </div>
+            <label class="switch-ui">
+              <input type="checkbox" id="toggle-grok-edit">
+              <span class="switch-slider" style="background-color: #3b82f6;"></span>
+            </label>
+          </div>
+
+          <div class="pre-options hidden" id="grok-options-container" style="margin-top: 6px; display: flex; flex-direction: column; gap: 8px; background: rgba(59, 130, 246, 0.07); border: 1px solid rgba(59, 130, 246, 0.3); border-radius: 8px; padding: 10px;">
+            <div class="select-field">
+              <label for="input-grok-api-key" style="font-size: 0.74rem;">xAI API Key</label>
+              <input type="password" id="input-grok-api-key" class="studio-select" placeholder="Paste xAI API key (xai-...)" autocomplete="off" style="width: 100%; padding: 7px 9px; font-size: 0.74rem; background: #161226; color: #dbeafe; border: 1px solid rgba(59, 130, 246, 0.4); border-radius: 6px;">
+              <div id="grok-key-status" style="font-size: 0.70rem; color: #93c5fd; min-height: 14px; margin-top: 4px;"></div>
+            </div>
+            <div style="display: flex; gap: 6px;">
+              <button type="button" id="btn-grok-save-key" class="sample-btn" style="flex: 1; color: #93c5fd; border-color: rgba(59, 130, 246, 0.4); padding: 4px 8px; font-size: 0.70rem; font-weight: 600;">💾 Save Key</button>
+              <button type="button" id="btn-grok-clear-key" class="sample-btn" style="flex: 1; color: #fca5a5; border-color: rgba(248, 113, 113, 0.4); padding: 4px 8px; font-size: 0.70rem; font-weight: 600;">🗑️ Remove Key</button>
+            </div>
+          </div>
+
           <!-- Anime De-Shine & Cel Restorer -->
           <div class="switch-row">
             <div>
@@ -2549,6 +2576,7 @@ input:checked + .switch-slider::before {
         <!-- Stage Inspector Sub-Bar (only shown when Inspect Stages is active) -->
         <div class="stage-sub-bar hidden" id="stage-sub-bar">
           <button class="stage-pill" data-stage="raw">1. Raw</button>
+          <button class="stage-pill hidden" id="pill-stage-grok" data-stage="grok_edited">1a. Grok AI Edit</button>
           <button class="stage-pill hidden" id="pill-stage-watermark" data-stage="watermark_cleaned">1b. De-Watermarked</button>
           <button class="stage-pill hidden" id="pill-stage-cel" data-stage="cel_restored">1c. Cel Restored</button>
           <button class="stage-pill" data-stage="segmented">2. Background Cut</button>

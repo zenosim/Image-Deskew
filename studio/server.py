@@ -38,6 +38,7 @@ from deskew_pipeline.color_enhancer import (
     AI_LORA_PRESETS,
     REAL_SAFETENSORS_DEFINITIONS
 )
+from deskew_pipeline.grok_edit import load_grok_key, save_grok_key, clear_grok_key, grok_key_configured
 
 PORT = 8080
 ROOT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -540,6 +541,7 @@ code {{ background: #0f172a; padding: 2px 6px; border-radius: 4px; color: #38bdf
             remove_watermarks = bool(data.get("remove_watermarks", False))
             watermark_sensitivity = int(data.get("watermark_sensitivity", 50))
             watermark_region = str(data.get("watermark_region", "full"))
+            grok_ai_edit = bool(data.get("grok_ai_edit", False))
             remove_shine = bool(data.get("remove_shine", False))
             shine_strength = int(data.get("shine_strength", 60))
             color_tiers = int(data.get("color_tiers", 40))
@@ -601,6 +603,8 @@ code {{ background: #0f172a; padding: 2px 6px; border-radius: 4px; color: #38bdf
                     remove_watermarks=remove_watermarks,
                     watermark_sensitivity=watermark_sensitivity,
                     watermark_region=watermark_region,
+                    grok_ai_edit=grok_ai_edit,
+                    grok_api_key=(load_grok_key() if grok_ai_edit else ""),
                     remove_shine=remove_shine,
                     shine_strength=shine_strength,
                     color_tiers=color_tiers,
@@ -684,6 +688,8 @@ code {{ background: #0f172a; padding: 2px 6px; border-radius: 4px; color: #38bdf
                     }
                     if result.watermark_cleaned is not None:
                         stages_dict["watermark_cleaned"] = pil_to_base64_png(_preview_img(result.watermark_cleaned), compress_level=1)
+                    if result.grok_edited is not None:
+                        stages_dict["grok_edited"] = pil_to_base64_png(_preview_img(result.grok_edited), compress_level=1)
                     if result.cel_restored is not None:
                         stages_dict["cel_restored"] = pil_to_base64_png(_preview_img(result.cel_restored), compress_level=1)
                     if result.color_enhanced is not None:
@@ -1105,6 +1111,37 @@ code {{ background: #0f172a; padding: 2px 6px; border-radius: 4px; color: #38bdf
                 try: self.wfile.write(err_body)
                 except Exception: pass
                 return
+
+        elif parsed.path == "/api/grok-key":
+            content_length = int(self.headers.get("Content-Length", 0))
+            body = self.rfile.read(content_length) if content_length > 0 else b"{}"
+            try:
+                data = json.loads(body.decode("utf-8")) if body else {}
+            except Exception:
+                data = {}
+            action = str(data.get("action", "status"))
+            if action == "set":
+                api_key = str(data.get("api_key", "")).strip()
+                if not api_key:
+                    res_body = json.dumps({"success": False, "error": "api_key is empty"}).encode("utf-8")
+                    self.send_response(400)
+                else:
+                    save_grok_key(api_key)
+                    res_body = json.dumps({"success": True, "configured": True}).encode("utf-8")
+                    self.send_response(200)
+            elif action == "clear":
+                clear_grok_key()
+                res_body = json.dumps({"success": True, "configured": False}).encode("utf-8")
+                self.send_response(200)
+            else:  # status
+                res_body = json.dumps({"success": True, "configured": grok_key_configured()}).encode("utf-8")
+                self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(res_body)))
+            self.end_headers()
+            try: self.wfile.write(res_body)
+            except Exception: pass
+            return
 
         elif parsed.path == "/api/save-local":
             content_length = int(self.headers.get("Content-Length", 0))
