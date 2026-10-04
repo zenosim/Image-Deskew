@@ -364,11 +364,45 @@ class PerspectiveDeskewer:
                     horiz_angles.append(ang)
             # Require >=4 lines AND tight agreement (std < 2.5 deg): pose edges (dress folds,
             # leaning bodies) produce 2-3 stray lines that mimic tilt on upright art.
+            # Scale-consistency gate: a REAL physical skew is scale-invariant. Pose-edge
+            # pseudo-lines are rasterization artifacts — they vanish at half resolution
+            # (measured: ada upright read 10.08 deg full-res, None at half-res).
             if len(horiz_angles) >= 5 and float(np.std(horiz_angles)) < 1.8:
                 median_ang = float(np.median(horiz_angles))
                 if abs(median_ang) >= 0.4:
-                    return median_ang
+                    small = cv2.resize(
+                        mask,
+                        (max(1, w // 2), max(1, h // 2)),
+                        interpolation=cv2.INTER_NEAREST,
+                    )
+                    half_ang = self._strategy3_lines(small)
+                    if half_ang is not None and abs(half_ang - median_ang) <= 0.8:
+                        return median_ang
+                    if half_ang is None:
+                        return None
 
+        return None
+
+    def _strategy3_lines(self, mask: np.ndarray) -> Optional[float]:
+        """Strategy-3 Hough-line median angle for a mask (used for scale-consistency)."""
+        h, w = mask.shape
+        edges = cv2.Canny(mask, 50, 150)
+        lines = cv2.HoughLinesP(edges, 1, np.pi / 180, threshold=15, minLineLength=max(18, int(min(w, h) * 0.05)), maxLineGap=15)
+        horiz_angles = []
+        if lines is not None:
+            for x1, y1, x2, y2 in lines.reshape(-1, 4):
+                dx = float(x2 - x1)
+                dy = float(y2 - y1)
+                ang = math.degrees(math.atan2(dy, dx))
+                if ang > 90:
+                    ang -= 180
+                elif ang < -90:
+                    ang += 180
+                if abs(ang) <= 25.0:
+                    horiz_angles.append(ang)
+        if len(horiz_angles) >= 5 and float(np.std(horiz_angles)) < 1.8:
+            med = float(np.median(horiz_angles))
+            return med if abs(med) >= 0.4 else None
         return None
 
     def deskew_character_artwork(self, image: Image.Image, mask: Optional[Any] = None, rgb: Optional[np.ndarray] = None) -> DeskewResult:
