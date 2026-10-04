@@ -1,0 +1,82 @@
+[
+  {
+    "semi_pct": 0.4419624389840325,
+    "opaque_pct": 37.878381732439806,
+    "empty_pct": 61.67965582857615,
+    "wm_residual_pct": 0.595515843468189,
+    "deskew_err_deg": null,
+    "recovered_angle": null,
+    "runtime_s": 2.91,
+    "name": "complex_bg"
+  },
+  {
+    "semi_pct": 0.43470066518847006,
+    "opaque_pct": 61.38968957871397,
+    "empty_pct": 38.175609756097565,
+    "wm_residual_pct": 0.9437915742793792,
+    "deskew_err_deg": null,
+    "recovered_angle": null,
+    "runtime_s": 2.05,
+    "name": "glare_55"
+  },
+  {
+    "semi_pct": 0.7217318200924758,
+    "opaque_pct": 47.958806221101305,
+    "empty_pct": 51.31946195880622,
+    "wm_residual_pct": 2.5136612021857925,
+    "deskew_err_deg": null,
+    "recovered_angle": null,
+    "runtime_s": 1.42,
+    "name": "held_items"
+  },
+  {
+    "semi_pct": 0.2995759333065872,
+    "opaque_pct": 39.45259695421633,
+    "empty_pct": 60.24782711247708,
+    "wm_residual_pct": 0.601859736609761,
+    "deskew_err_deg": null,
+    "recovered_angle": null,
+    "runtime_s": 3.78,
+    "name": "rotated_-3"
+  },
+  {
+    "semi_pct": 0.31240171451370696,
+    "opaque_pct": 41.76340284057783,
+    "empty_pct": 57.92419544490846,
+    "wm_residual_pct": 0.6386812454133439,
+    "deskew_err_deg": null,
+    "recovered_angle": null,
+    "runtime_s": 3.33,
+    "name": "rotated_6"
+  },
+  {
+    "semi_pct": 0.30180471356941946,
+    "opaque_pct": 40.30810869046163,
+    "empty_pct": 59.39008659596895,
+    "wm_residual_pct": 0.6170035581800287,
+    "deskew_err_deg": null,
+    "recovered_angle": null,
+    "runtime_s": 3.13,
+    "name": "shadowed_4"
+  },
+  {
+    "semi_pct": 0.43669572436695725,
+    "opaque_pct": 61.312079701120794,
+    "empty_pct": 38.25122457451224,
+    "wm_residual_pct": 0.9612840736128407,
+    "deskew_err_deg": null,
+    "recovered_angle": null,
+    "runtime_s": 2.18,
+    "name": "watermarked_a52_tiles"
+  },
+  {
+    "semi_pct": 0.44211982842119835,
+    "opaque_pct": 61.29060467690605,
+    "empty_pct": 38.26727549467275,
+    "wm_residual_pct": 0.9344956413449564,
+    "deskew_err_deg": null,
+    "recovered_angle": null,
+    "runtime_s": 2.18,
+    "name": "watermarked_a90_single"
+  }
+]
