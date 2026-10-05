@@ -3,7 +3,10 @@
 const state = {
   queue: [],              // Array of { id, name, base64, path, thumbnail, status, stages, metadata }
   activeItemId: null,     // Currently active queue item ID
-  isProcessing: false,    // Whether a pipeline request is currently executing
+  isProcessing: false,    // Whether a pipeline request is currently executing (any slot busy)
+  activeCount: 0,         // Number of in-flight pipeline requests (concurrent slots in use)
+  maxConcurrent: 2,       // Max simultaneous pipeline jobs (each Grok job is additionally
+                          // capped server-side by GROK_MAX_CONCURRENT)
   currentImagePath: null,
   currentImageBase64: null,
   currentFileName: null,
@@ -47,6 +50,7 @@ const btnBrowseEmpty = document.getElementById("btn-browse-empty");
 
 // Queue, Local Folder & Auto-Process DOM
 const toggleAutoProcess = document.getElementById("toggle-auto-process");
+const inputMaxConcurrent = document.getElementById("input-max-concurrent");
 const toggleSaveLocal = document.getElementById("toggle-save-local");
 const queueBadgeCount = document.getElementById("queue-badge-count");
 const queueItemsContainer = document.getElementById("queue-items-container");
@@ -737,7 +741,18 @@ function removeQueueItem(itemId, event) {
   const index = state.queue.findIndex(q => q.id === itemId);
   if (index === -1) return;
 
+  const item = state.queue[index];
+
+  // Abort the in-flight request first so its slot frees cleanly. Clearing
+  // _slotHeld makes the deferred _jobFinished(item) from the aborted fetch a no-op.
+  if (item.status === "processing" && item._abortController) {
+    try { item._abortController.abort(); } catch (_) {}
+    item._abortController = null;
+    item._slotHeld = false;
+  }
+
   state.queue.splice(index, 1);
+  _jobFinished(item);
 
   if (state.activeItemId === itemId) {
     if (state.queue.length > 0) {
@@ -757,7 +772,7 @@ function handleQueueItemClick(itemId) {
   const wasActive = state.activeItemId === itemId;
   selectQueueItem(itemId);
   // If user clicks on an already active queued sticker, process it immediately!
-  if (wasActive && item.status === "queued" && !state.isProcessing) {
+  if (wasActive && item.status === "queued" && state.activeCount < state.maxConcurrent) {
     runPipeline();
   }
 }
@@ -766,18 +781,19 @@ function processSingleQueueItem(itemId, event) {
   if (event) event.stopPropagation();
   const item = state.queue.find(q => q.id === itemId);
   if (!item) return;
-  if (state.isProcessing) {
-    showToast("⏳ Pipeline is currently busy. Please wait...");
+  if (item.status === "processing") {
+    showToast("⏳ This item is already processing...");
     return;
   }
   item.status = "queued";
+  renderQueueTray();
   selectQueueItem(itemId);
   runPipeline();
 }
 
 function processAllQueue() {
-  if (state.isProcessing) {
-    showToast("⏳ Pipeline is already processing an item...");
+  if (state.activeCount >= state.maxConcurrent) {
+    showToast("⏳ All processing slots are busy...");
     return;
   }
   if (!state.queue || state.queue.length === 0) {
@@ -788,7 +804,7 @@ function processAllQueue() {
   if (!hasQueued) {
     // If all items are done or errored, re-queue them so "Process All" runs
     state.queue.forEach(q => {
-      q.status = "queued";
+      if (q.status !== "processing") q.status = "queued";
     });
     renderQueueTray();
     showToast("🔄 Re-queued all images for processing");
@@ -2257,60 +2273,89 @@ function startProgressAnimation() {
 }
 
 // -------------------------------------------------------------
-// Auto-Processor Queue Trigger
+// Auto-Processor Queue Trigger (slot-based concurrency scheduler)
 // -------------------------------------------------------------
+// Up to state.maxConcurrent items run in parallel; the rest sit in "queued"
+// and are pulled in FIFO order as slots free up. state.isProcessing means
+// "at least one job is in flight", so existing busy-guards keep working.
 function triggerQueueProcessor() {
-  if (state.isProcessing) return;
+  if (!state.queue.some(q => q.status === "queued")) return;
+  if (state.activeCount >= state.maxConcurrent) return;
+  if (typeof runPipeline !== "function") return;
+  runPipeline();
+  // runPipeline claims its slot synchronously (before its first await), so
+  // recursing here immediately fills every free slot instead of launching
+  // jobs strictly one-per-completion. Recursion depth <= maxConcurrent.
+  triggerQueueProcessor();
+}
 
-  // Find next queued item
-  const nextItem = state.queue.find(q => q.status === "queued");
-  if (nextItem) {
-    runPipeline(nextItem.id);
+function _jobFinished(item) {
+  // Idempotent: only the holder of the slot releases it (abort paths, remove
+  // and cancel can all race to call this for the same job).
+  if (item && item._slotHeld) {
+    item._slotHeld = false;
+    state.activeCount = Math.max(0, state.activeCount - 1);
+    state.isProcessing = state.activeCount > 0;
+    if (!state.isProcessing && !state.queue.some(q => q.status === "queued")) {
+      const doneCount = state.queue.filter(q => q.status === "done").length;
+      if (doneCount > 1) showToast(`✓ Batch complete — ${doneCount} stickers ready`);
+    }
   }
+  // Pull the next queued item into any freed slot
+  setTimeout(triggerQueueProcessor, 100);
 }
 
 // -------------------------------------------------------------
 // Cancellation Support
 // -------------------------------------------------------------
 function cancelCurrentProcess() {
-  if (!state.isProcessing && loadingOverlay.classList.contains("hidden")) {
+  if (state.activeCount === 0 && loadingOverlay.classList.contains("hidden")) {
     return;
   }
 
-  if (currentAbortController) {
-    try {
-      currentAbortController.abort();
-    } catch (_) {}
-    currentAbortController = null;
-  }
+  // Abort every in-flight job (each has its own controller) and release its
+  // slot here so the deferred _jobFinished() from the aborted fetch is a no-op.
+  state.queue.forEach(q => {
+    if (q.status === "processing" && q._abortController) {
+      try { q._abortController.abort(); } catch (_) {}
+      q._abortController = null;
+      q._slotHeld = false;
+      if (q.stages && q.stages["final"]) {
+        q.status = "done";
+      } else {
+        q.status = "queued";
+      }
+    }
+  });
 
   if (currentProgressInterval) {
     clearInterval(currentProgressInterval);
     currentProgressInterval = null;
   }
+  currentAbortController = null;
 
+  // _jobFinished() runs per aborted fetch and resets activeCount/isProcessing,
+  // but also do it here synchronously so the UI is immediately responsive.
+  state.activeCount = 0;
   state.isProcessing = false;
   hideLoadingOverlay();
   statusIndicator.classList.remove("busy");
   statusText.textContent = "Cancelled";
 
-  let activeItem = state.queue.find(q => q.id === state.activeItemId);
-  if (activeItem && activeItem.status === "processing") {
-    if (activeItem.stages && activeItem.stages["final"]) {
-      activeItem.status = "done";
-    } else {
-      activeItem.status = "queued";
-    }
-    renderQueueTray();
-  }
-
+  renderQueueTray();
   showToast("🛑 Process cancelled");
+
+  // Restart the scheduler for anything that went back to queued
+  setTimeout(triggerQueueProcessor, 200);
 }
 
 // -------------------------------------------------------------
 // Main Pipeline Execution
 // -------------------------------------------------------------
 async function runPipeline(targetItemId = null) {
+  // Concurrency gate: never exceed maxConcurrent in-flight jobs
+  if (state.activeCount >= state.maxConcurrent) return;
+
   // If targetItemId specified, select it
   if (targetItemId) {
     selectQueueItem(targetItemId);
@@ -2318,59 +2363,55 @@ async function runPipeline(targetItemId = null) {
 
   // Get active queue item
   let activeItem = state.queue.find(q => q.id === state.activeItemId);
-  if (!activeItem || activeItem.status === "done" || activeItem.status === "error") {
-    // Auto-advance to next queued item if available
+  if (!activeItem || activeItem.status !== "queued") {
+    // Active item is missing/processing/done/error: auto-advance to the next
+    // queued item so parallel slots never stall on a busy selection.
     const pendingItem = state.queue.find(q => q.status === "queued");
     if (pendingItem) {
       selectQueueItem(pendingItem.id);
       activeItem = pendingItem;
+    } else if (activeItem && (activeItem.status === "done" || activeItem.status === "error") && state.activeCount === 0) {
+      // Explicit Process click on a finished/errored item with nothing else
+      // queued: re-run it (previous default behavior).
+      activeItem.status = "queued";
     }
   }
 
-  if (!hasLoadedImage()) {
-    showToast("⚠️ Drop, paste (Ctrl+V), or select an image first!");
-    if (dropzone) {
-      dropzone.style.borderColor = "var(--accent)";
-      setTimeout(() => { dropzone.style.borderColor = ""; }, 1200);
-    }
+  if (!activeItem || activeItem.status !== "queued") {
     return;
   }
 
-  if (!activeItem) {
-    // If not in queue yet, add it
-    activeItem = {
-      id: "item_" + Date.now(),
-      name: state.currentFileName || "Current Sticker",
-      base64: state.currentImageBase64,
-      path: state.currentImagePath,
-      thumbnail: state.currentImageBase64 || state.currentImagePath,
-      status: "processing",
-      stages: null,
-      metadata: null
-    };
-    state.queue.push(activeItem);
-    state.activeItemId = activeItem.id;
+  // Claim the item + slot atomically (single-threaded JS, so check-then-set is safe)
+  activeItem.status = "processing";
+  activeItem._slotHeld = true;
+  state.activeItemId = activeItem.id;
+  state.activeCount++;
+  state.isProcessing = true;
+  renderQueueTray();
+
+  if (!activeItem.base64 && !activeItem.path) {
+    // Nothing to process (defensive; shouldn't happen for queue items)
+    showToast("⚠️ Drop, paste (Ctrl+V), or select an image first!");
+    activeItem.status = "error";
+    _jobFinished(activeItem);
+    return;
   }
 
   // Ensure base64 is resolved if loaded via on-demand file reference
   if (!activeItem.base64 && activeItem.file) {
     await ensureItemBase64(activeItem);
-    state.currentImageBase64 = activeItem.base64;
   }
 
-  activeItem.status = "processing";
-  state.isProcessing = true;
-  renderQueueTray();
-
-  statusText.textContent = "Processing...";
+  statusText.textContent = `Processing (${state.activeCount}/${state.maxConcurrent} slots)...`;
   statusIndicator.classList.add("busy");
-  showLoadingOverlay("Processing Sticker...", "Initializing pipeline...", 6);
-
-  // Abort any lingering request before starting new process
-  if (currentAbortController) {
-    try { currentAbortController.abort(); } catch (_) {}
+  if (state.activeCount === 1) {
+    showLoadingOverlay("Processing Sticker...", "Initializing pipeline...", 6);
   }
-  currentAbortController = new AbortController();
+
+  // Per-job abort controller so cancelling one item doesn't kill its siblings
+  const jobAbort = new AbortController();
+  activeItem._abortController = jobAbort;
+  currentAbortController = jobAbort;
 
   if (currentProgressInterval) {
     clearInterval(currentProgressInterval);
@@ -2547,7 +2588,7 @@ async function runPipeline(targetItemId = null) {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(payload),
-      signal: currentAbortController.signal
+      signal: jobAbort.signal
     });
 
     const data = await res.json();
@@ -2602,25 +2643,24 @@ async function runPipeline(targetItemId = null) {
 
       setTimeout(() => {
         try {
-          if (mainStickerImg) mainStickerImg.style.transform = "";
-          // Reset manual angle/skews now that they are baked into the returned image
-          state.manualRotation = 0;
-          state.horizontalSkew = 0;
-          state.verticalSkew = 0;
-          state.flipH = false;
-          state.flipV = false;
-          if (sliderRotation) sliderRotation.value = 0;
-          if (badgeRot) badgeRot.textContent = "0°";
-          if (sliderHorizontalSkew) sliderHorizontalSkew.value = 0;
-          if (badgeHorizontalSkew) badgeHorizontalSkew.textContent = "0°";
-          if (sliderVerticalSkew) sliderVerticalSkew.value = 0;
-          if (badgeVerticalSkew) badgeVerticalSkew.textContent = "0°";
+          if (mainStickerImg && state.activeItemId === activeItem.id) {
+            mainStickerImg.style.transform = "";
+            // Reset manual angle/skews now that they are baked into the returned image
+            state.manualRotation = 0;
+            state.horizontalSkew = 0;
+            state.verticalSkew = 0;
+            state.flipH = false;
+            state.flipV = false;
+            if (sliderRotation) sliderRotation.value = 0;
+            if (badgeRot) badgeRot.textContent = "0°";
+            if (sliderHorizontalSkew) sliderHorizontalSkew.value = 0;
+            if (badgeHorizontalSkew) badgeHorizontalSkew.textContent = "0°";
+            if (sliderVerticalSkew) sliderVerticalSkew.value = 0;
+            if (badgeVerticalSkew) badgeVerticalSkew.textContent = "0°";
 
-          updateDisplayView();
-          updateMetrics(data.metadata);
-          if (statusText) statusText.textContent = "Ready";
-          if (statusIndicator) statusIndicator.classList.remove("busy");
-
+            updateDisplayView();
+            updateMetrics(data.metadata);
+          }
           // Ensure paintbrush tool stays active and doesn't disappear on generate!
           if (state.isRoiMode) {
             setRoiMode(true);
@@ -2628,27 +2668,20 @@ async function runPipeline(targetItemId = null) {
         } catch (postErr) {
           console.error("Error updating display post-process:", postErr);
         } finally {
-          hideLoadingOverlay();
-          state.isProcessing = false;
-        }
-
-        // If Auto-Process is checked, trigger next queued item after state.isProcessing is cleared
-        if (toggleAutoProcess && toggleAutoProcess.checked) {
-          setTimeout(triggerQueueProcessor, 100);
+          if (state.activeCount <= 1) hideLoadingOverlay();
+          _jobFinished(activeItem);
         }
       }, 50);
     } else {
       console.error("Pipeline returned failure:", data.error);
       activeItem.status = "error";
-      state.isProcessing = false;
       renderQueueTray();
-      statusText.textContent = data.error || "Error";
-      statusIndicator.classList.remove("busy");
-      hideLoadingOverlay();
-
-      if (toggleAutoProcess && toggleAutoProcess.checked) {
-        setTimeout(triggerQueueProcessor, 400);
+      if (state.activeCount <= 1) {
+        statusText.textContent = data.error || "Error";
+        statusIndicator.classList.remove("busy");
+        hideLoadingOverlay();
       }
+      _jobFinished(activeItem);
     }
   } catch (err) {
     if (currentProgressInterval) {
@@ -2659,7 +2692,8 @@ async function runPipeline(targetItemId = null) {
 
     if (err.name === "AbortError" || (err.message && err.message.toLowerCase().includes("abort"))) {
       console.log("Pipeline processing aborted by user.");
-      hideLoadingOverlay();
+      if (state.activeCount <= 1) hideLoadingOverlay();
+      _jobFinished(activeItem);
       return;
     }
 
@@ -2667,15 +2701,13 @@ async function runPipeline(targetItemId = null) {
     if (activeItem) {
       activeItem.status = "error";
     }
-    state.isProcessing = false;
     renderQueueTray();
-    statusText.textContent = "Network error";
-    statusIndicator.classList.remove("busy");
-    hideLoadingOverlay();
-
-    if (toggleAutoProcess && toggleAutoProcess.checked) {
-      setTimeout(triggerQueueProcessor, 400);
+    if (state.activeCount <= 1) {
+      statusText.textContent = "Network error";
+      statusIndicator.classList.remove("busy");
+      hideLoadingOverlay();
     }
+    _jobFinished(activeItem);
   }
 }
 
@@ -4597,6 +4629,7 @@ function saveStudioSettings() {
 
       // Queue & Tools
       autoProcess: toggleAutoProcess ? toggleAutoProcess.checked : false,
+      maxConcurrent: state.maxConcurrent,
       saveLocal: toggleSaveLocal ? toggleSaveLocal.checked : true,
       inpaintModel: selectInpaintModel ? selectInpaintModel.value : "anime",
       inpaintBrushSize: sliderInpaintBrush ? sliderInpaintBrush.value : "28",
@@ -4742,6 +4775,11 @@ function restoreStudioSettings() {
 
     // 5. Queue & Tools
     if (toggleAutoProcess && s.autoProcess !== undefined) toggleAutoProcess.checked = !!s.autoProcess;
+    if (s.maxConcurrent !== undefined) {
+      const mc = Math.max(1, Math.min(8, parseInt(s.maxConcurrent) || 2));
+      state.maxConcurrent = mc;
+      if (inputMaxConcurrent) inputMaxConcurrent.value = String(mc);
+    }
     if (toggleSaveLocal && s.saveLocal !== undefined) toggleSaveLocal.checked = !!s.saveLocal;
     if (selectInpaintModel && s.inpaintModel !== undefined) selectInpaintModel.value = s.inpaintModel;
     if (sliderInpaintBrush && s.inpaintBrushSize !== undefined) {
@@ -4813,7 +4851,7 @@ function restoreStudioSettings() {
   toggleAiLora, selectAiLoraPreset, toggleBorder, selectHighlightMode, pickerHighlightColor,
   sliderBorderWidth, sliderBorderSmoothing, sliderGlowRadius, toggleSuperRes, selectEnhancerModel, selectEnhancerScale,
   togglePreserveColors, toggleAutoProcess, toggleSaveLocal, selectInpaintModel, sliderInpaintBrush, sliderHighlightBrush,
-  sliderRotation, sliderHorizontalSkew, sliderVerticalSkew
+  sliderRotation, sliderHorizontalSkew, sliderVerticalSkew, inputMaxConcurrent
 ].forEach(ctrl => {
   if (!ctrl) return;
   ctrl.addEventListener("input", scheduleAutosave);

@@ -22,6 +22,7 @@ import os
 import io
 import json
 import base64
+import threading
 import time
 import urllib.request
 import urllib.error
@@ -31,6 +32,19 @@ from .chroma_key import CHROMA_BG_INSTRUCTIONS
 
 XAI_EDIT_URL = "https://api.x.ai/v1/images/edits"
 XAI_EDIT_MODEL = "grok-imagine-image-2.0"
+
+# Maximum number of Grok edit API calls allowed to run at the same time.
+# All studio requests share this one global gate: callers beyond the cap block
+# here (in their own thread) until a slot frees up, so N parallel jobs from the
+# UI still hit the xAI API at most GROK_MAX_CONCURRENT at once.
+# Override with the GROK_MAX_CONCURRENT env var (min 1).
+_env_conc = None
+try:
+    _env_conc = int(os.environ.get("GROK_MAX_CONCURRENT", ""))
+except (TypeError, ValueError):
+    _env_conc = None
+GROK_MAX_CONCURRENT = max(1, _env_conc if _env_conc else 2)
+_grok_slot = threading.BoundedSemaphore(GROK_MAX_CONCURRENT)
 # Key store lives OUTSIDE the repository (user config dir) so it can never be
 # committed/pushed by accident. Env var XAI_API_KEY is the primary source; the
 # file is the dashboard-managed fallback.
@@ -136,59 +150,69 @@ def grok_edit_image(
     prompt: str = GROK_EDIT_PROMPT,
     timeout_s: int = 180,
 ) -> Tuple[Optional[Image.Image], str]:
-    """Calls the xAI image-edit endpoint. Returns (edited_image | None, error_message)."""
+    """Calls the xAI image-edit endpoint. Returns (edited_image | None, error_message).
+
+    Concurrent callers beyond GROK_MAX_CONCURRENT wait here until a slot frees;
+    the wait time is logged so saturation is visible in the server console.
+    """
     if not api_key:
         return None, "No Grok API key configured."
-    buf = io.BytesIO()
-    image.convert("RGB").save(buf, format="PNG")
-    b64 = base64.b64encode(buf.getvalue()).decode("utf-8")
-    payload = json.dumps({
-        "model": XAI_EDIT_MODEL,
-        "prompt": prompt,
-        "image": {
-            "url": f"data:image/png;base64,{b64}",
-            "type": "image_url",
-        },
-        # Zero-Data-Retention accounts reject URL-format responses (the URL would require
-        # xAI to store the generated image). Always request base64 output.
-        "response_format": "b64_json",
-    }).encode("utf-8")
-    req = urllib.request.Request(
-        XAI_EDIT_URL,
-        data=payload,
-        headers={
-            "Content-Type": "application/json",
-            "Authorization": f"Bearer {api_key}",
-        },
-        method="POST",
-    )
-    t0 = time.time()
-    try:
-        with urllib.request.urlopen(req, timeout=timeout_s) as resp:
-            body = json.loads(resp.read().decode("utf-8"))
-    except urllib.error.HTTPError as e:
-        detail = ""
+    t_gate = time.time()
+    with _grok_slot:
+        waited = time.time() - t_gate
+        if waited > 0.5:
+            print(f"[GrokEdit] concurrency gate: waited {waited:.1f}s for a free slot "
+                  f"(max {GROK_MAX_CONCURRENT} concurrent)")
+        buf = io.BytesIO()
+        image.convert("RGB").save(buf, format="PNG")
+        b64 = base64.b64encode(buf.getvalue()).decode("utf-8")
+        payload = json.dumps({
+            "model": XAI_EDIT_MODEL,
+            "prompt": prompt,
+            "image": {
+                "url": f"data:image/png;base64,{b64}",
+                "type": "image_url",
+            },
+            # Zero-Data-Retention accounts reject URL-format responses (the URL would require
+            # xAI to store the generated image). Always request base64 output.
+            "response_format": "b64_json",
+        }).encode("utf-8")
+        req = urllib.request.Request(
+            XAI_EDIT_URL,
+            data=payload,
+            headers={
+                "Content-Type": "application/json",
+                "Authorization": f"Bearer {api_key}",
+            },
+            method="POST",
+        )
+        t0 = time.time()
         try:
-            detail = e.read().decode("utf-8")[:500]
-        except Exception:
-            pass
-        return None, f"Grok API HTTP {e.code}: {detail}"
-    except Exception as e:
-        return None, f"Grok API request failed: {e}"
+            with urllib.request.urlopen(req, timeout=timeout_s) as resp:
+                body = json.loads(resp.read().decode("utf-8"))
+        except urllib.error.HTTPError as e:
+            detail = ""
+            try:
+                detail = e.read().decode("utf-8")[:500]
+            except Exception:
+                pass
+            return None, f"Grok API HTTP {e.code}: {detail}"
+        except Exception as e:
+            return None, f"Grok API request failed: {e}"
 
-    data = body.get("data") or []
-    if not data:
-        return None, f"Grok API returned no image data: {str(body)[:300]}"
-    item = data[0]
-    img = None
-    url = item.get("url")
-    b64_out = item.get("b64_json")
-    if b64_out:
-        img = Image.open(io.BytesIO(base64.b64decode(b64_out)))
-    elif url:
-        with urllib.request.urlopen(url, timeout=timeout_s) as r:
-            img = Image.open(io.BytesIO(r.read()))
-    if img is None:
-        return None, "Grok API response contained neither url nor b64_json."
-    print(f"[GrokEdit] Edited image received in {time.time() - t0:.1f}s ({img.size[0]}x{img.size[1]})")
-    return img.convert("RGB"), ""
+        data = body.get("data") or []
+        if not data:
+            return None, f"Grok API returned no image data: {str(body)[:300]}"
+        item = data[0]
+        img = None
+        url = item.get("url")
+        b64_out = item.get("b64_json")
+        if b64_out:
+            img = Image.open(io.BytesIO(base64.b64decode(b64_out)))
+        elif url:
+            with urllib.request.urlopen(url, timeout=timeout_s) as r:
+                img = Image.open(io.BytesIO(r.read()))
+        if img is None:
+            return None, "Grok API response contained neither url nor b64_json."
+        print(f"[GrokEdit] Edited image received in {time.time() - t0:.1f}s ({img.size[0]}x{img.size[1]})")
+        return img.convert("RGB"), ""

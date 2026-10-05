@@ -1849,6 +1849,19 @@ input:checked + .switch-slider::before {
           <!-- Auto-Process on Import Checkbox -->
           <div class="switch-row" style="margin-top: 4px; padding-top: 8px; border-top: 1px solid var(--border-subtle);">
             <div>
+              <div class="switch-title">Max Concurrent Jobs</div>
+              <div class="switch-desc">Queue items processed in parallel (Grok calls are additionally capped server-side)</div>
+            </div>
+            <select id="input-max-concurrent" class="studio-select" style="width: 64px; padding: 4px 6px; font-size: 0.74rem;">
+              <option value="1">1</option>
+              <option value="2" selected>2</option>
+              <option value="3">3</option>
+              <option value="4">4</option>
+              <option value="6">6</option>
+            </select>
+          </div>
+          <div class="switch-row" style="margin-top: 4px;">
+            <div>
               <div class="switch-title">Auto-Process on Import</div>
               <div class="switch-desc">Auto-run script when pasting (Ctrl+V) or dropping images</div>
             </div>
