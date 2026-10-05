@@ -176,6 +176,8 @@ const btnGrokSaveKey = document.getElementById("btn-grok-save-key");
 const btnGrokClearKey = document.getElementById("btn-grok-clear-key");
 const grokKeyStatus = document.getElementById("grok-key-status");
 const pillStageGrok = document.getElementById("pill-stage-grok");
+const selectGrokModel = document.getElementById("input-grok-model");
+const inputGrokCustomPrompt = document.getElementById("input-grok-custom-prompt");
 const watermarkOptionsContainer = document.getElementById("watermark-options-container");
 const sliderWatermarkSensitivity = document.getElementById("slider-watermark-sensitivity");
 const badgeWatermarkSensitivity = document.getElementById("badge-watermark-sensitivity");
@@ -2223,7 +2225,12 @@ function updateDisplayView() {
     mainStickerImg.src = state.stages["final"] || "";
   } else if (state.viewMode === "raw") {
     stageSubBar.classList.add("hidden");
-    mainStickerImg.src = state.stages["raw"] || "";
+    // Fall back to the item's original image when no processed "raw" stage
+    // exists yet (fresh import, errored job, or placeholder result).
+    mainStickerImg.src = state.stages["raw"] || state.currentImageBase64
+      || (state.queue.find(q => q.id === state.activeItemId) || {}).base64
+      || (state.queue.find(q => q.id === state.activeItemId) || {}).path
+      || "";
   } else if (state.viewMode === "stages") {
     stageSubBar.classList.remove("hidden");
     renderCurrentStage();
@@ -2563,6 +2570,8 @@ async function runPipeline(targetItemId = null) {
     watermark_sensitivity: sliderWatermarkSensitivity ? parseInt(sliderWatermarkSensitivity.value) : 50,
     watermark_region: "full",
     grok_ai_edit: toggleGrokEdit ? toggleGrokEdit.checked : false,
+    grok_model: selectGrokModel ? selectGrokModel.value : "imagine-2",
+    grok_custom_prompt: inputGrokCustomPrompt ? inputGrokCustomPrompt.value : "",
     clean_hair_gaps: toggleCleanHairGaps ? toggleCleanHairGaps.checked : true,
     remove_shine: toggleShineRemover ? toggleShineRemover.checked : false,
     shine_strength: sliderShineStrength ? parseInt(sliderShineStrength.value) : 60,
@@ -4606,6 +4615,8 @@ function saveStudioSettings() {
 
       // Grok AI Edit
       grokEdit: toggleGrokEdit ? toggleGrokEdit.checked : false,
+      grokModel: selectGrokModel ? selectGrokModel.value : "imagine-2",
+      grokCustomPrompt: inputGrokCustomPrompt ? inputGrokCustomPrompt.value : "",
 
       // Color Pop & AI LoRA
       colorPop: toggleColorPop ? toggleColorPop.checked : false,
@@ -4709,6 +4720,8 @@ function restoreStudioSettings() {
       toggleGrokEdit.checked = !!s.grokEdit;
       if (grokOptionsContainer) grokOptionsContainer.classList.toggle("hidden", !toggleGrokEdit.checked);
     }
+    if (selectGrokModel && s.grokModel !== undefined) selectGrokModel.value = s.grokModel;
+    if (inputGrokCustomPrompt && s.grokCustomPrompt !== undefined) inputGrokCustomPrompt.value = s.grokCustomPrompt;
 
     // 3. Color Pop & AI LoRA
     if (toggleColorPop && s.colorPop !== undefined) {
@@ -4847,6 +4860,7 @@ function restoreStudioSettings() {
   selectAiModel, toggleCleanHairGaps, toggleSmudgeCleaner, sliderSmudgeSensitivity, sliderAlphaThreshold,
   selectDeskewMode, toggleShineRemover, sliderShineStrength, sliderColorTiers, toggleFlatCel,
   toggleGrokEdit,
+  selectGrokModel, inputGrokCustomPrompt,
   toggleColorPop, selectColorPopPreset, sliderColorPopVibrance, sliderColorPopClarity,
   toggleAiLora, selectAiLoraPreset, toggleBorder, selectHighlightMode, pickerHighlightColor,
   sliderBorderWidth, sliderBorderSmoothing, sliderGlowRadius, toggleSuperRes, selectEnhancerModel, selectEnhancerScale,

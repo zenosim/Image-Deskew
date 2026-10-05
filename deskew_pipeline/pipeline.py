@@ -116,6 +116,8 @@ class StickerPipeline:
         watermark_region: str = "corners_and_margins",
         grok_ai_edit: bool = False,
         grok_api_key: str = "",
+        grok_model: str = "imagine-2",
+        grok_custom_prompt: str = "",
         remove_shine: bool = False,
         shine_strength: int = 60,
         color_tiers: int = 40,
@@ -232,6 +234,8 @@ class StickerPipeline:
         self.watermark_region = watermark_region
         self.grok_ai_edit = grok_ai_edit
         self.grok_api_key = grok_api_key
+        self.grok_model = grok_model
+        self.grok_custom_prompt = grok_custom_prompt
         self.remove_shine = remove_shine
         self.shine_strength = shine_strength
         self.color_tiers = color_tiers
@@ -317,8 +321,8 @@ class StickerPipeline:
             from . import grok_edit as _grok_mod
             from .chroma_key import chroma_key_matte
             t0g = time.time()
-            prompt = _grok_mod.build_grok_prompt(chroma_bg="green")
-            edited, err = _grok_mod.grok_edit_image(raw_img, self.grok_api_key, prompt=prompt)
+            prompt = _grok_mod.build_grok_prompt(chroma_bg="green", custom_prompt=self.grok_custom_prompt)
+            edited, err = _grok_mod.grok_edit_image(raw_img, self.grok_api_key, prompt=prompt, model=self.grok_model)
             if edited is not None:
                 grok_edited_img = edited
                 current_prep_img = edited

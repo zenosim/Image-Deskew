@@ -33,6 +33,13 @@ from .chroma_key import CHROMA_BG_INSTRUCTIONS
 XAI_EDIT_URL = "https://api.x.ai/v1/images/edits"
 XAI_EDIT_MODEL = "grok-imagine-image-2.0"
 
+# Grok edit models available on the xAI API (user-selectable in the studio UI).
+GROK_MODELS = {
+    "imagine-1": "grok-imagine-image",
+    "imagine-2": "grok-imagine-image-2.0",
+}
+GROK_DEFAULT_MODEL = "imagine-2"
+
 # Maximum number of Grok edit API calls allowed to run at the same time.
 # All studio requests share this one global gate: callers beyond the cap block
 # here (in their own thread) until a slot frees up, so N parallel jobs from the
@@ -131,16 +138,28 @@ def grok_key_configured() -> bool:
     return bool(load_grok_key())
 
 
-def build_grok_prompt(chroma_bg: str = "white") -> str:
+def build_grok_prompt(chroma_bg: str = "white", custom_prompt: str = "") -> str:
     """Returns THE Grok edit prompt with the requested background color instruction.
 
     chroma_bg='green' swaps the white-background instruction for chroma-key green
     so deskew_pipeline.chroma_key.chroma_key_matte can extract the character with
     a hard-edged distance matte (measured better than isnet-anime on hair).
+
+    custom_prompt: optional user extra instructions appended after the OUTPUT
+    REQUIREMENTS block. The user's text may only ADD requirements (franchise
+    style, accessories to keep, framing hints...); the core isolation/cleanup
+    rules above stay authoritative.
     """
     bg_mid, bg_end = CHROMA_BG_INSTRUCTIONS.get(chroma_bg, CHROMA_BG_INSTRUCTIONS["white"])
     prompt = GROK_EDIT_PROMPT.replace(CHROMA_BG_INSTRUCTIONS["white"][0], bg_mid)
     prompt = prompt.replace(CHROMA_BG_INSTRUCTIONS["white"][1], bg_end)
+    extra = (custom_prompt or "").strip()
+    if extra:
+        prompt += (
+            "\n\nADDITIONAL USER INSTRUCTIONS (higher priority than anything above; "
+            "follow them exactly, they never override the rules they do not mention):\n"
+            f"{extra}"
+        )
     return prompt
 
 
@@ -149,14 +168,17 @@ def grok_edit_image(
     api_key: str,
     prompt: str = GROK_EDIT_PROMPT,
     timeout_s: int = 180,
+    model: Optional[str] = None,
 ) -> Tuple[Optional[Image.Image], str]:
     """Calls the xAI image-edit endpoint. Returns (edited_image | None, error_message).
 
-    Concurrent callers beyond GROK_MAX_CONCURRENT wait here until a slot frees;
-    the wait time is logged so saturation is visible in the server console.
+    model: 'imagine-1' | 'imagine-2' (default) or a raw model id. The concurrency
+    gate below applies to every model — calls beyond GROK_MAX_CONCURRENT wait
+    here until a slot frees; the wait time is logged so saturation is visible.
     """
     if not api_key:
         return None, "No Grok API key configured."
+    model_id = GROK_MODELS.get(model, model) if model else GROK_MODELS[GROK_DEFAULT_MODEL]
     t_gate = time.time()
     with _grok_slot:
         waited = time.time() - t_gate
@@ -167,7 +189,7 @@ def grok_edit_image(
         image.convert("RGB").save(buf, format="PNG")
         b64 = base64.b64encode(buf.getvalue()).decode("utf-8")
         payload = json.dumps({
-            "model": XAI_EDIT_MODEL,
+            "model": model_id,
             "prompt": prompt,
             "image": {
                 "url": f"data:image/png;base64,{b64}",

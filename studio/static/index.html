@@ -1945,6 +1945,18 @@ input:checked + .switch-slider::before {
               <input type="password" id="input-grok-api-key" class="studio-select" placeholder="Paste xAI API key (xai-...)" autocomplete="off" style="width: 100%; padding: 7px 9px; font-size: 0.74rem; background: #161226; color: #dbeafe; border: 1px solid rgba(59, 130, 246, 0.4); border-radius: 6px;">
               <div id="grok-key-status" style="font-size: 0.70rem; color: #93c5fd; min-height: 14px; margin-top: 4px;"></div>
             </div>
+            <div class="select-field">
+              <label for="input-grok-model" style="font-size: 0.74rem;">Grok Model</label>
+              <select id="input-grok-model" class="studio-select" style="width: 100%; padding: 7px 9px; font-size: 0.74rem; background: #161226; color: #dbeafe; border: 1px solid rgba(59, 130, 246, 0.4); border-radius: 6px;">
+                <option value="imagine-2" selected>Imagine Image 2.0 (newest, best quality)</option>
+                <option value="imagine-1">Imagine Image 1 (older gen)</option>
+              </select>
+            </div>
+            <div class="select-field">
+              <label for="input-grok-custom-prompt" style="font-size: 0.74rem;">Custom Prompt (appended to the expert edit prompt)</label>
+              <textarea id="input-grok-custom-prompt" class="studio-select" rows="3" placeholder="e.g. 'Keep the fox tail and lantern exactly as drawn' or 'Make it look like a Pokemon card'" style="width: 100%; padding: 7px 9px; font-size: 0.72rem; background: #161226; color: #dbeafe; border: 1px solid rgba(59, 130, 246, 0.4); border-radius: 6px; resize: vertical; font-family: inherit;"></textarea>
+              <div style="font-size: 0.66rem; color: #7dd3fc; margin-top: 3px;">Adds your instructions on top of the built-in watermark/background/color edit. Background stays chroma-key green.</div>
+            </div>
             <div style="display: flex; gap: 6px;">
               <button type="button" id="btn-grok-save-key" class="sample-btn" style="flex: 1; color: #93c5fd; border-color: rgba(59, 130, 246, 0.4); padding: 4px 8px; font-size: 0.70rem; font-weight: 600;">💾 Save Key</button>
               <button type="button" id="btn-grok-clear-key" class="sample-btn" style="flex: 1; color: #fca5a5; border-color: rgba(248, 113, 113, 0.4); padding: 4px 8px; font-size: 0.70rem; font-weight: 600;">🗑️ Remove Key</button>

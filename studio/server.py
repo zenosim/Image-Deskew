@@ -39,6 +39,7 @@ from deskew_pipeline.color_enhancer import (
     REAL_SAFETENSORS_DEFINITIONS
 )
 from deskew_pipeline.grok_edit import load_grok_key, save_grok_key, clear_grok_key, grok_key_configured
+from deskew_pipeline import grok_edit as grok_mod
 
 PORT = 8080
 ROOT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -542,6 +543,8 @@ code {{ background: #0f172a; padding: 2px 6px; border-radius: 4px; color: #38bdf
             watermark_sensitivity = int(data.get("watermark_sensitivity", 50))
             watermark_region = str(data.get("watermark_region", "full"))
             grok_ai_edit = bool(data.get("grok_ai_edit", False))
+            grok_model = str(data.get("grok_model", "imagine-2") or "imagine-2")
+            grok_custom_prompt = str(data.get("grok_custom_prompt", "") or "")[:2000]
             remove_shine = bool(data.get("remove_shine", False))
             shine_strength = int(data.get("shine_strength", 60))
             color_tiers = int(data.get("color_tiers", 40))
@@ -605,6 +608,8 @@ code {{ background: #0f172a; padding: 2px 6px; border-radius: 4px; color: #38bdf
                     watermark_region=watermark_region,
                     grok_ai_edit=grok_ai_edit,
                     grok_api_key=(load_grok_key() if grok_ai_edit else ""),
+                    grok_model=grok_model,
+                    grok_custom_prompt=grok_custom_prompt,
                     remove_shine=remove_shine,
                     shine_strength=shine_strength,
                     color_tiers=color_tiers,
@@ -1134,7 +1139,12 @@ code {{ background: #0f172a; padding: 2px 6px; border-radius: 4px; color: #38bdf
                 res_body = json.dumps({"success": True, "configured": False}).encode("utf-8")
                 self.send_response(200)
             else:  # status
-                res_body = json.dumps({"success": True, "configured": grok_key_configured()}).encode("utf-8")
+                res_body = json.dumps({
+                    "success": True,
+                    "configured": grok_key_configured(),
+                    "models": grok_mod.GROK_MODELS,
+                    "default_model": grok_mod.GROK_DEFAULT_MODEL,
+                }).encode("utf-8")
                 self.send_response(200)
             self.send_header("Content-Type", "application/json")
             self.send_header("Content-Length", str(len(res_body)))

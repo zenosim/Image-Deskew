@@ -19,9 +19,10 @@ from deskew_pipeline import grok_edit as grok_mod
 calls = {"n": 0}
 
 
-def fake_edit(image, api_key, prompt="", timeout_s=180):
+def fake_edit(image, api_key, prompt="", timeout_s=180, model=None):
     calls["n"] += 1
     assert "GREEN" in prompt.upper() or "#00FF00" in prompt, "prompt must request green bg"
+    assert model in (None, "imagine-2"), f"unexpected model: {model}"
     return GREEN, ""
 
 
