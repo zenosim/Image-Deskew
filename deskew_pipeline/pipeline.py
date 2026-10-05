@@ -304,6 +304,38 @@ class StickerPipeline:
         t_color_pop = 0.0
         current_prep_img = raw_img
 
+        # Pre-Processing Stage 0: Grok AI edit. When enabled it is THE only pre-processing:
+        # the single prompt already erases watermarks, cleans glare and pops colors, so the
+        # local watermark/shine stages are skipped, and the local color pop is skipped too
+        # (double-popping distorts art). Only background removal + finishing run after.
+        grok_edited_img = None
+        if self.grok_ai_edit:
+            if progress_callback:
+                progress_callback(6, "Grok AI: editing artwork (watermarks, background, color)...")
+            from . import grok_edit as _grok_mod
+            t0g = time.time()
+            edited, err = _grok_mod.grok_edit_image(raw_img, self.grok_api_key)
+            if edited is not None:
+                grok_edited_img = edited
+                current_prep_img = edited
+                raw_img = edited  # downstream stages (extractor raw sampling) see the edit too
+                t_wm = time.time() - t0g  # report under preprocess_watermark slot
+                wm_detected = True
+                # Grok covers watermark + shine + color pop: disable all local pre-stages.
+                self.remove_watermarks = False
+                self.remove_shine = False
+                self.color_pop_preset = "off"
+                self.color_pop_vibrance = None
+                self.color_pop_clarity = None
+                watermark_cleaned_img = None
+                if progress_callback:
+                    progress_callback(18, f"Grok AI edit complete ({time.time() - t0g:.0f}s)")
+            else:
+                # Fail open to the local pipeline rather than aborting the job
+                print(f"[StickerPipeline] Grok edit failed, continuing locally: {err}")
+                if progress_callback:
+                    progress_callback(18, "Grok edit failed — using local pipeline")
+
         if self.remove_watermarks:
             wm_res = self.watermark_remover.remove(
                 current_prep_img,
@@ -314,30 +346,6 @@ class StickerPipeline:
             watermark_cleaned_img = wm_res.cleaned_image
             t_wm = wm_res.execution_time_s
             wm_detected = wm_res.watermark_detected
-
-        # Pre-Processing Stage 0: Grok AI edit (replaces watermark/shine/color-pop stages —
-        # the single prompt already handles watermark removal, glare cleanup and color pop).
-        grok_edited_img = None
-        if self.grok_ai_edit:
-            if progress_callback:
-                progress_callback(6, "Grok AI: editing artwork (watermarks, background, color)...")
-            from .grok_edit import grok_edit_image
-            t0g = time.time()
-            edited, err = grok_edit_image(raw_img, self.grok_api_key)
-            if edited is not None:
-                grok_edited_img = edited
-                current_prep_img = edited
-                # The Grok edit covers everything the local pre-stages would do; skip them
-                # so the model's cleaned artwork is what segmentation sees.
-                self.remove_watermarks = False
-                self.remove_shine = False
-                if progress_callback:
-                    progress_callback(18, f"Grok AI edit complete ({time.time() - t0g:.0f}s)")
-            else:
-                # Fail open to the local pipeline rather than aborting the job
-                print(f"[StickerPipeline] Grok edit failed, continuing locally: {err}")
-                if progress_callback:
-                    progress_callback(18, "Grok edit failed — using local pipeline")
 
         # System 1: Background & Foreground Segmentor (receives clean pre-processed image)
         if progress_callback:
