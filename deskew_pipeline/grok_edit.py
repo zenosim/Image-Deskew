@@ -135,6 +135,9 @@ def grok_edit_image(
             "url": f"data:image/png;base64,{b64}",
             "type": "image_url",
         },
+        # Zero-Data-Retention accounts reject URL-format responses (the URL would require
+        # xAI to store the generated image). Always request base64 output.
+        "response_format": "b64_json",
     }).encode("utf-8")
     req = urllib.request.Request(
         XAI_EDIT_URL,
