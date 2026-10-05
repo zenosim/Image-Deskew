@@ -13,8 +13,9 @@ Grok does NOT output transparency, so downstream the normal pipeline still runs:
 isnet-anime segmentation pulls the character off the white canvas, then
 deskew/border/color finishing applies exactly as usual.
 
-The API key is stored server-side in studio/grok_api_key.json (chmod 600) via the
-/api/grok-key endpoints. Never hard-coded, never logged.
+The API key is stored OUTSIDE the repository in ~/.config/sticker-studio/grok_api_key.json
+(chmod 600) via the /api/grok-key endpoints — it can never be committed/pushed. The
+XAI_API_KEY environment variable takes precedence when set. Never hard-coded, never logged.
 """
 
 import os
@@ -29,7 +30,11 @@ from PIL import Image
 
 XAI_EDIT_URL = "https://api.x.ai/v1/images/edits"
 XAI_EDIT_MODEL = "grok-imagine-image-2.0"
-KEY_STORE_PATH = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "studio", "grok_api_key.json")
+# Key store lives OUTSIDE the repository (user config dir) so it can never be
+# committed/pushed by accident. Env var XAI_API_KEY is the primary source; the
+# file is the dashboard-managed fallback.
+KEY_STORE_DIR = os.path.join(os.path.expanduser("~"), ".config", "sticker-studio")
+KEY_STORE_PATH = os.path.join(KEY_STORE_DIR, "grok_api_key.json")
 
 # Single consolidated instruction prompt. This is THE prompt — everything the edit
 # must do is specified here; no other prompt exists in the codebase.
@@ -78,6 +83,9 @@ GROK_EDIT_PROMPT = (
 
 
 def load_grok_key() -> str:
+    env_key = os.environ.get("XAI_API_KEY", "").strip()
+    if env_key:
+        return env_key
     try:
         with open(KEY_STORE_PATH, "r", encoding="utf-8") as f:
             return (json.load(f).get("api_key") or "").strip()
