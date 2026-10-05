@@ -27,6 +27,7 @@ import urllib.request
 import urllib.error
 from typing import Optional, Tuple
 from PIL import Image
+from .chroma_key import CHROMA_BG_INSTRUCTIONS
 
 XAI_EDIT_URL = "https://api.x.ai/v1/images/edits"
 XAI_EDIT_MODEL = "grok-imagine-image-2.0"
@@ -114,6 +115,19 @@ def clear_grok_key() -> None:
 
 def grok_key_configured() -> bool:
     return bool(load_grok_key())
+
+
+def build_grok_prompt(chroma_bg: str = "white") -> str:
+    """Returns THE Grok edit prompt with the requested background color instruction.
+
+    chroma_bg='green' swaps the white-background instruction for chroma-key green
+    so deskew_pipeline.chroma_key.chroma_key_matte can extract the character with
+    a hard-edged distance matte (measured better than isnet-anime on hair).
+    """
+    bg_mid, bg_end = CHROMA_BG_INSTRUCTIONS.get(chroma_bg, CHROMA_BG_INSTRUCTIONS["white"])
+    prompt = GROK_EDIT_PROMPT.replace(CHROMA_BG_INSTRUCTIONS["white"][0], bg_mid)
+    prompt = prompt.replace(CHROMA_BG_INSTRUCTIONS["white"][1], bg_end)
+    return prompt
 
 
 def grok_edit_image(

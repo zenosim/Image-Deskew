@@ -309,12 +309,16 @@ class StickerPipeline:
         # local watermark/shine stages are skipped, and the local color pop is skipped too
         # (double-popping distorts art). Only background removal + finishing run after.
         grok_edited_img = None
+        chroma_extracted = False
+        pre_seg = None
         if self.grok_ai_edit:
             if progress_callback:
                 progress_callback(6, "Grok AI: editing artwork (watermarks, background, color)...")
             from . import grok_edit as _grok_mod
+            from .chroma_key import chroma_key_matte
             t0g = time.time()
-            edited, err = _grok_mod.grok_edit_image(raw_img, self.grok_api_key)
+            prompt = _grok_mod.build_grok_prompt(chroma_bg="green")
+            edited, err = _grok_mod.grok_edit_image(raw_img, self.grok_api_key, prompt=prompt)
             if edited is not None:
                 grok_edited_img = edited
                 current_prep_img = edited
@@ -328,6 +332,17 @@ class StickerPipeline:
                 self.color_pop_vibrance = None
                 self.color_pop_clarity = None
                 watermark_cleaned_img = None
+                # Chroma-key extraction directly from the synthetic green background:
+                # measured crisper than isnet-anime (preserves hair strands, no halo).
+                try:
+                    chroma_rgba, _bg = chroma_key_matte(edited)
+                    # Validate: chroma key must have found a substantial subject
+                    a_arr = np.asarray(chroma_rgba)[:, :, 3]
+                    if float((a_arr > 128).mean()) > 0.05:
+                        pre_seg = chroma_rgba
+                        chroma_extracted = True
+                except Exception as chroma_err:
+                    print(f"[StickerPipeline] Chroma key failed, using isnet fallback: {chroma_err}")
                 if progress_callback:
                     progress_callback(18, f"Grok AI edit complete ({time.time() - t0g:.0f}s)")
             else:
@@ -350,7 +365,23 @@ class StickerPipeline:
         # System 1: Background & Foreground Segmentor (receives clean pre-processed image)
         if progress_callback:
             progress_callback(25, "System 1/5: AI Background & Foreground Segmentation...")
-        if precomputed_segmentation is not None and not self.remove_watermarks:
+        if chroma_extracted:
+            # Grok mode: the chroma key already produced a clean matte from the synthetic
+            # green background — skip the neural segmentor entirely.
+            chroma_rgba_img = pre_seg
+            c_arr = np.asarray(chroma_rgba_img)
+            c_mask = (c_arr[:, :, 3] > 128).astype(np.uint8) * 255
+            ys, xs = np.nonzero(c_mask)
+            c_bbox = (int(xs.min()), int(ys.min()), int(xs.max() - xs.min() + 1), int(ys.max() - ys.min() + 1)) if len(xs) else (0, 0, 1, 1)
+            seg_res = SegmentationResult(
+                rgba=chroma_rgba_img,
+                mask=c_mask,
+                bbox=c_bbox,
+                confidence=1.0,
+                features={}
+            )
+            t_seg = 0.0
+        elif precomputed_segmentation is not None and not self.remove_watermarks:
             seg_res = precomputed_segmentation
             t_seg = 0.0
             if active_hint_mask is not None or active_neg_mask is not None:
