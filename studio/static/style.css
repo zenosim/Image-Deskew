@@ -709,26 +709,34 @@ input:checked + .switch-slider::before {
   transition: transform var(--transition-fast);
 }
 
-/* Loading Overlay with Dynamic Progress Bar */
+/* Loading Widget (non-blocking floating status card — replaced the old
+   full-screen scrim so the UI stays usable while jobs run and more Grok
+   jobs can be queued in parallel) */
 .loading-scrim {
   position: fixed;
-  inset: 0;
-  background: rgba(6, 9, 18, 0.85);
-  backdrop-filter: blur(14px);
-  -webkit-backdrop-filter: blur(14px);
+  bottom: 18px;
+  right: 18px;
+  background: transparent;
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
   display: flex;
   flex-direction: column;
-  align-items: center;
-  justify-content: center;
+  align-items: flex-end;
+  justify-content: flex-end;
   z-index: 99999;
+  pointer-events: none; /* scrim itself never blocks the UI */
+}
+
+.loading-scrim .loading-card {
+  pointer-events: auto; /* only the card (progress + cancel) is interactive */
 }
 
 .loading-card {
   background: rgba(16, 21, 34, 0.95);
   border: 1px solid rgba(99, 102, 241, 0.4);
   border-radius: var(--radius-lg);
-  padding: 24px 28px;
-  width: 400px;
+  padding: 14px 18px;
+  width: 320px;
   max-width: 90%;
   display: flex;
   flex-direction: column;

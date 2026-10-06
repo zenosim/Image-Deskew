@@ -118,6 +118,7 @@ class StickerPipeline:
         grok_api_key: str = "",
         grok_model: str = "imagine-2",
         grok_custom_prompt: str = "",
+        grok_background_model: Optional[str] = None,
         remove_shine: bool = False,
         shine_strength: int = 60,
         color_tiers: int = 40,
@@ -236,6 +237,11 @@ class StickerPipeline:
         self.grok_api_key = grok_api_key
         self.grok_model = grok_model
         self.grok_custom_prompt = grok_custom_prompt
+        # Manual background-removal override on top of the Grok edit: None =
+        # default (chroma-key the synthetic green background). Set to a segmentor
+        # model name ('isnet-anime', 'birefnet-general', 'u2net') to skip the
+        # chroma key and run that neural segmentor on the edited image instead.
+        self.grok_background_model = grok_background_model
         self.remove_shine = remove_shine
         self.shine_strength = shine_strength
         self.color_tiers = color_tiers
@@ -354,6 +360,17 @@ class StickerPipeline:
                 print(f"[StickerPipeline] Grok edit failed, continuing locally: {err}")
                 if progress_callback:
                     progress_callback(18, "Grok edit failed — using local pipeline")
+
+        # Optional manual background-removal override: when grok_background_model
+        # is set AND a manual AI model was explicitly requested, run that segmentor
+        # on the (Grok-edited or raw) image INSTEAD of the chroma key. Use case:
+        # Grok's matte comes out wrong (eaten hair, cut props) — the user can then
+        # force isnet-anime / birefnet / u2net on top of the edited image.
+        if self.grok_background_model:
+            chroma_extracted = False
+            pre_seg = None
+            print(f"[StickerPipeline] Manual background removal override: "
+                  f"{self.grok_background_model} on top of the Grok edit")
 
         if self.remove_watermarks:
             wm_res = self.watermark_remover.remove(

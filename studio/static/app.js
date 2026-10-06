@@ -177,6 +177,7 @@ const btnGrokClearKey = document.getElementById("btn-grok-clear-key");
 const grokKeyStatus = document.getElementById("grok-key-status");
 const pillStageGrok = document.getElementById("pill-stage-grok");
 const selectGrokModel = document.getElementById("input-grok-model");
+const selectGrokBgModel = document.getElementById("select-grok-bg-model");
 const inputGrokCustomPrompt = document.getElementById("input-grok-custom-prompt");
 const watermarkOptionsContainer = document.getElementById("watermark-options-container");
 const sliderWatermarkSensitivity = document.getElementById("slider-watermark-sensitivity");
@@ -2572,6 +2573,7 @@ async function runPipeline(targetItemId = null) {
     grok_ai_edit: toggleGrokEdit ? toggleGrokEdit.checked : false,
     grok_model: selectGrokModel ? selectGrokModel.value : "imagine-2",
     grok_custom_prompt: inputGrokCustomPrompt ? inputGrokCustomPrompt.value : "",
+    grok_background_model: selectGrokBgModel && toggleGrokEdit && toggleGrokEdit.checked ? selectGrokBgModel.value : "",
     clean_hair_gaps: toggleCleanHairGaps ? toggleCleanHairGaps.checked : true,
     remove_shine: toggleShineRemover ? toggleShineRemover.checked : false,
     shine_strength: sliderShineStrength ? parseInt(sliderShineStrength.value) : 60,

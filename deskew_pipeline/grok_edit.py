@@ -22,6 +22,7 @@ import os
 import io
 import json
 import base64
+import random
 import threading
 import time
 import urllib.request
@@ -62,15 +63,20 @@ KEY_STORE_PATH = os.path.join(KEY_STORE_DIR, "grok_api_key.json")
 # (color pop, cel restore, shine removal) is force-disabled downstream, so this
 # sentence is the one place image enhancement is requested.
 GROK_ENHANCE_INSTRUCTION = (
-    "4. COLOR ENHANCEMENT (your edit is the ONLY enhancement this artwork receives — no other "
-    "tool will process it afterwards): INCREASE THE COLOR of the image — clearly boost vibrance "
+    "4. COLOR ENHANCEMENT & CEL CLEANUP (your edit is the ONLY enhancement this artwork receives — "
+    "no other tool will process it afterwards): INCREASE THE COLOR of the image — clearly boost vibrance "
     "and saturation so every hue is rich, lively and print-ready, and deepen contrast slightly so "
-    "line art stays crisp and blacks stay clean. Keep skin tones natural. This is a finishing "
-    "touch, not a re-style: do NOT "
+    "line art stays crisp and blacks stay clean. REMOVE ALL HAZE AND UNWANTED SHINE: any foggy, milky "
+    "or washed-out overlay, atmospheric haze, and any specular shine, gloss, sheen or glare highlight "
+    "that does not belong to the original artwork (plastic-sleeve reflections, scanner sheen, photo "
+    "hotspots) must be cleaned away. CONVERT THE SHADING TO CLEAN CEL ART: replace soft/airbrushed or "
+    "photographic-looking shading with crisp cel-shaded tones — flat discrete color tiers, hard clean "
+    "shadow edges, uniform fills — matching the artwork's own cel style. Keep skin tones natural. "
+    "This is a finishing touch, not a re-style: do NOT "
     "re-style, re-paint, re-render, stylize, or reinterpret the artwork. Preserve the original "
     "artist's exact drawing style, line weight, proportions, facial features, pose, expression "
     "and palette identity. The character at the end must be unmistakably the SAME character "
-    "from the source image, just cleaned with stronger, more vivid color."
+    "from the source image, just cleaned with stronger, more vivid cel-shaded color."
 )
 
 # Single consolidated instruction prompt. This is THE prompt — everything the edit
@@ -225,18 +231,67 @@ def grok_edit_image(
             method="POST",
         )
         t0 = time.time()
-        try:
-            with urllib.request.urlopen(req, timeout=timeout_s) as resp:
-                body = json.loads(resp.read().decode("utf-8"))
-        except urllib.error.HTTPError as e:
-            detail = ""
+        # Rate-limit aware retry: batch jobs (multiple images at once) regularly
+        # hit xAI 429s when several edits land together. Retry 429/5xx with
+        # exponential backoff + jitter, honoring Retry-After when present, so
+        # the job eventually succeeds instead of failing the whole batch.
+        max_attempts = int(os.environ.get("GROK_MAX_RETRIES", "4"))
+        attempt = 0
+        while True:
+            attempt += 1
             try:
-                detail = e.read().decode("utf-8")[:500]
-            except Exception:
-                pass
-            return None, f"Grok API HTTP {e.code}: {detail}"
-        except Exception as e:
-            return None, f"Grok API request failed: {e}"
+                with urllib.request.urlopen(req, timeout=timeout_s) as resp:
+                    body = json.loads(resp.read().decode("utf-8"))
+                break
+            except urllib.error.HTTPError as e:
+                detail = ""
+                try:
+                    detail = e.read().decode("utf-8")[:500]
+                except Exception:
+                    pass
+                retryable = e.code in (429, 500, 502, 503, 504)
+                if retryable and attempt < max_attempts:
+                    delay = None
+                    try:
+                        delay = float(e.headers.get("Retry-After", ""))
+                    except (TypeError, ValueError, AttributeError):
+                        delay = None
+                    if delay is None:
+                        delay = min(30.0, (2 ** attempt) * 1.5) + random.uniform(0.0, 1.5)
+                    print(f"[GrokEdit] HTTP {e.code} (attempt {attempt}/{max_attempts}), "
+                          f"retrying in {delay:.1f}s: {detail[:120]}")
+                    time.sleep(delay)
+                    # Rebuild the request: a Request object can be reused, but
+                    # be explicit so headers/state are always fresh.
+                    req = urllib.request.Request(
+                        XAI_EDIT_URL,
+                        data=payload,
+                        headers={
+                            "Content-Type": "application/json",
+                            "Authorization": f"Bearer {api_key}",
+                        },
+                        method="POST",
+                    )
+                    continue
+                return None, f"Grok API HTTP {e.code}: {detail}"
+            except Exception as e:
+                # Network-level transient failures also deserve one retry
+                if attempt < max_attempts and isinstance(e, (urllib.error.URLError, TimeoutError, ConnectionError)):
+                    delay = min(30.0, (2 ** attempt) * 1.5) + random.uniform(0.0, 1.5)
+                    print(f"[GrokEdit] transient {type(e).__name__} (attempt {attempt}/{max_attempts}), "
+                          f"retrying in {delay:.1f}s")
+                    time.sleep(delay)
+                    req = urllib.request.Request(
+                        XAI_EDIT_URL,
+                        data=payload,
+                        headers={
+                            "Content-Type": "application/json",
+                            "Authorization": f"Bearer {api_key}",
+                        },
+                        method="POST",
+                    )
+                    continue
+                return None, f"Grok API request failed: {e}"
 
         data = body.get("data") or []
         if not data:

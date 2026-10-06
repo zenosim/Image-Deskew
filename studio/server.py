@@ -553,6 +553,9 @@ code {{ background: #0f172a; padding: 2px 6px; border-radius: 4px; color: #38bdf
             # Hair gap cleanup & Color Pop
             clean_hair_gaps = bool(data.get("clean_hair_gaps", True))
             color_pop_preset = str(data.get("color_pop_preset", "off"))
+            # Manual background-removal override on top of the Grok edit
+            # ('' or None = default chroma key; model name = force that segmentor)
+            grok_background_model = str(data.get("grok_background_model", "") or "").strip() or None
             ai_lora_enabled = bool(data.get("ai_lora_enabled", False))
             ai_lora_preset = str(data.get("ai_lora_preset", "lora_shinkai"))
             if ai_lora_enabled and color_pop_preset != "off":
@@ -610,6 +613,7 @@ code {{ background: #0f172a; padding: 2px 6px; border-radius: 4px; color: #38bdf
                     grok_api_key=(load_grok_key() if grok_ai_edit else ""),
                     grok_model=grok_model,
                     grok_custom_prompt=grok_custom_prompt,
+                    grok_background_model=grok_background_model,
                     remove_shine=remove_shine,
                     shine_strength=shine_strength,
                     color_tiers=color_tiers,

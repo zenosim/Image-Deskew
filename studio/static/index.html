@@ -988,26 +988,34 @@ input:checked + .switch-slider::before {
   transition: transform var(--transition-fast);
 }
 
-/* Loading Overlay with Progress Bar */
+/* Loading Widget (non-blocking floating status card — replaced the old
+   full-screen scrim so the UI stays usable while jobs run and more Grok
+   jobs can be queued in parallel) */
 .loading-scrim {
   position: fixed;
-  inset: 0;
-  background: rgba(6, 9, 18, 0.85);
-  backdrop-filter: blur(14px);
-  -webkit-backdrop-filter: blur(14px);
+  bottom: 18px;
+  right: 18px;
+  background: transparent;
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
   display: flex;
   flex-direction: column;
-  align-items: center;
-  justify-content: center;
+  align-items: flex-end;
+  justify-content: flex-end;
   z-index: 99999;
+  pointer-events: none; /* scrim itself never blocks the UI */
+}
+
+.loading-scrim .loading-card {
+  pointer-events: auto; /* only the card (progress + cancel) is interactive */
 }
 
 .loading-card {
   background: rgba(16, 21, 34, 0.95);
   border: 1px solid rgba(99, 102, 241, 0.4);
   border-radius: var(--radius-lg);
-  padding: 24px 28px;
-  width: 380px;
+  padding: 14px 18px;
+  width: 320px;
   max-width: 90%;
   display: flex;
   flex-direction: column;
@@ -1951,6 +1959,16 @@ input:checked + .switch-slider::before {
                 <option value="imagine-2" selected>Imagine Image 2.0 (newest, best quality)</option>
                 <option value="imagine-1">Imagine Image 1 (older gen)</option>
               </select>
+            </div>
+            <div class="select-field">
+              <label for="select-grok-bg-model" style="font-size: 0.74rem;">Background Removal (on Grok result)</label>
+              <select id="select-grok-bg-model" class="studio-select" style="width: 100%; padding: 7px 9px; font-size: 0.74rem; background: #161226; color: #dbeafe; border: 1px solid rgba(59, 130, 246, 0.4); border-radius: 6px;">
+                <option value="" selected>Chroma Key (default — crispest on the green screen)</option>
+                <option value="isnet-anime">Manual: ISNet Anime</option>
+                <option value="birefnet-general">Manual: BiRefNet General</option>
+                <option value="u2net">Manual: U2-Net General</option>
+              </select>
+              <div style="font-size: 0.66rem; color: #7dd3fc; margin-top: 3px;">If Grok's cutout eats hair or props, force a manual AI removal on top of the edited image.</div>
             </div>
             <div class="select-field">
               <label for="input-grok-custom-prompt" style="font-size: 0.74rem;">Custom Prompt (appended to the expert edit prompt)</label>
