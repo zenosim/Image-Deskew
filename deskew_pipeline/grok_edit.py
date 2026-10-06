@@ -58,6 +58,21 @@ _grok_slot = threading.BoundedSemaphore(GROK_MAX_CONCURRENT)
 KEY_STORE_DIR = os.path.join(os.path.expanduser("~"), ".config", "sticker-studio")
 KEY_STORE_PATH = os.path.join(KEY_STORE_DIR, "grok_api_key.json")
 
+# Enhancement IS Grok's job: when the AI edit succeeds, every local color stage
+# (color pop, cel restore, shine removal) is force-disabled downstream, so this
+# sentence is the one place image enhancement is requested.
+GROK_ENHANCE_INSTRUCTION = (
+    "4. COLOR ENHANCEMENT (your edit is the ONLY enhancement this artwork receives — no other "
+    "tool will process it afterwards): INCREASE THE COLOR of the image — clearly boost vibrance "
+    "and saturation so every hue is rich, lively and print-ready, and deepen contrast slightly so "
+    "line art stays crisp and blacks stay clean. Keep skin tones natural. This is a finishing "
+    "touch, not a re-style: do NOT "
+    "re-style, re-paint, re-render, stylize, or reinterpret the artwork. Preserve the original "
+    "artist's exact drawing style, line weight, proportions, facial features, pose, expression "
+    "and palette identity. The character at the end must be unmistakably the SAME character "
+    "from the source image, just cleaned with stronger, more vivid color."
+)
+
 # Single consolidated instruction prompt. This is THE prompt — everything the edit
 # must do is specified here; no other prompt exists in the codebase.
 GROK_EDIT_PROMPT = (
@@ -75,10 +90,16 @@ GROK_EDIT_PROMPT = (
     "Do NOT crop any part of the character or their held items — the full silhouette must remain "
     "inside the frame with a comfortable margin.\n\n"
     "2. BACKGROUND REPLACEMENT: Remove the entire original background — every scenic element, "
-    "pattern, gradient, texture, text panel, logo, decorative shape and border. Replace it with "
-    "a completely plain, uniform, solid pure white (#FFFFFF) background filling the rest of the "
-    "canvas. No gradients, no vignettes, no shadows cast on the white, no remnants of the old "
-    "scene. The character should look like a clean sticker scan on white paper.\n\n"
+    "pattern, gradient, texture, text panel, logo, decorative shape and border. CRITICALLY: remove "
+    "EVERY shadow on the background — soft drop shadows, sharp/hard-edged shadow silhouettes cast "
+    "behind or beside the character, contact shadows, ground shadows, even faint gray or tinted "
+    "shadow shapes. Sharp, well-defined shadows count as background, not art — erase them "
+    "completely so the character floats cleanly with nothing beneath, behind or beside it. "
+    "Replace all of that with "
+    "{bg_mid} filling the rest of the "
+    "canvas. No gradients, no vignettes, no shadows of any kind on the background, no remnants "
+    "of the old scene. The character should look like a clean sticker scan on a perfectly even, "
+    "solid-color backdrop.\n\n"
     "3. WATERMARK ELIMINATION: Erase ALL watermarks, text, logos, URLs, usernames, signatures "
     "and tiled/repeating overlay patterns — including faint translucent 'ghost' text and "
     "semi-transparent tiled watermark grids that overlap the character's hair, skin, clothing "
@@ -86,21 +107,15 @@ GROK_EDIT_PROMPT = (
     "watermark never existed: continue line art, shading, fabric texture and color seamlessly. "
     "The result must contain zero readable or semi-readable text of any kind.\n\n"
     "4. SHADOW & GLARE CLEANUP: Remove any photographic defects that came from the original "
-    "background or from the sticker being photographed/scaned: drop shadows under or behind the "
-    "character, specular glare/hotspots on shiny printed surfaces, moiré patterns, and color "
+    "background or from the sticker being photographed/scaned: any remaining shadows on or around "
+    "the character, specular glare/hotspots on shiny printed surfaces, moiré patterns, and color "
     "casts from ambient lighting. The character should have the flat, even lighting of native "
     "digital art.\n\n"
-    "5. GENTLE COLOR ENHANCEMENT: Apply a SUBTLE color pop — modestly increase vibrance and "
-    "saturation so colors look lively and print-ready, deepen contrast slightly so line art "
-    "stays crisp, and keep skin tones natural. This is a light finishing touch: do NOT "
-    "re-style, re-paint, re-render, stylize, or reinterpret the artwork. Preserve the original "
-    "artist's exact drawing style, line weight, proportions, facial features, pose, expression "
-    "and palette identity. The character at the end must be unmistakably the SAME character "
-    "from the source image, just cleaned.\n\n"
+    + GROK_ENHANCE_INSTRUCTION + "\n\n"
     "OUTPUT REQUIREMENTS: Output the edited image at the same aspect ratio and resolution "
-    "class as the input. Full-bleed white background, character fully in frame, no text "
-    "anywhere, no borders, no frames, no rounded corners, no mockups — just the cleaned "
-    "artwork on flat white."
+    "class as the input. Full-bleed {bg_end}, character fully in frame, no text "
+    "anywhere, no borders, no frames, no rounded corners, no mockups — just the cleaned, "
+    "enhanced artwork on the plain solid-color backdrop with no shadows."
 )
 
 
@@ -151,8 +166,9 @@ def build_grok_prompt(chroma_bg: str = "white", custom_prompt: str = "") -> str:
     rules above stay authoritative.
     """
     bg_mid, bg_end = CHROMA_BG_INSTRUCTIONS.get(chroma_bg, CHROMA_BG_INSTRUCTIONS["white"])
-    prompt = GROK_EDIT_PROMPT.replace(CHROMA_BG_INSTRUCTIONS["white"][0], bg_mid)
-    prompt = prompt.replace(CHROMA_BG_INSTRUCTIONS["white"][1], bg_end)
+    prompt = GROK_EDIT_PROMPT.replace("{bg_mid}", bg_mid).replace("{bg_end}", bg_end)
+    # Guard: no unfilled placeholders may ever reach the model
+    assert "{bg_mid}" not in prompt and "{bg_end}" not in prompt
     extra = (custom_prompt or "").strip()
     if extra:
         prompt += (

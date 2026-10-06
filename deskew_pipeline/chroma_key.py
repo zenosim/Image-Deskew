@@ -93,8 +93,44 @@ def chroma_key_matte(img, tolerance=0.30, softness=0.20, despill=True,
         r, g, b = arr[..., 0], arr[..., 1], arr[..., 2]
         if bg[1] >= bg[0] and bg[1] >= bg[2]:
             # green background: clamp green to max(r, b) on the subject
+            # NOTE: r/g/b are VIEWS into arr — snapshot green dominance BEFORE
+            # the clamp below mutates arr[..., 1], or dark-green shadows (which
+            # the clamp de-greens) can never be detected as residual background.
+            green_dom = (g - np.maximum(r, b)) > 0.12
+            bg_g = float(bg[1])
+            # Green-ART restoration: genuinely green art (green hair, slime,
+            # leaves) can sit close enough to the screen color that the base
+            # distance key erases it. Bright green-dominant pixels far from
+            # the sampled bg are art, not screen: restore them when they touch
+            # the surviving subject. Shadow check: a shadow is DARKENED
+            # background, so only *dark* green counts as shadow; bright green
+            # is protected.
+            bright_art = green_dom & (g >= 0.7 * bg_g) & (dist > 0.5 * t0)
+            if bright_art.any():
+                cand_reg = ((alpha > 0.02) | bright_art).astype(np.uint8)
+                num2, lbl2, _, _ = cv2.connectedComponentsWithStats(cand_reg, connectivity=8)
+                subj_lbls = np.unique(lbl2[alpha > 0.02])
+                subj_lbls = subj_lbls[subj_lbls != 0]
+                if len(subj_lbls):
+                    restore = np.isin(lbl2, subj_lbls) & bright_art
+                    alpha = np.where(restore, 1.0, alpha)
             over = np.clip(g - np.maximum(r, b), 0, None)
             arr[..., 1] = np.where(subject, g - over, g)
+            subject = alpha > 0.02
+            # Residual-background rejection: sharp drop-shadows on the green
+            # screen are DARK GREEN — far enough from pure #00FF00 to pass the
+            # distance key, so they survive as opaque "foreground". Anything
+            # still green-dominant AND darker than 70% of the screen's green
+            # channel is shadow, not art: key it out. Safety valve: if that
+            # would erase >35% of the subject, the art itself is shadow-green —
+            # keep everything and rely on despill + defringe only.
+            shadow_like = green_dom & (g < 0.7 * bg_g)
+            cand = subject & shadow_like
+            if cand.any():
+                subj_px = float(subject.sum())
+                if float(cand.sum()) / max(1.0, subj_px) <= 0.35:
+                    alpha = np.where(cand, 0.0, alpha)
+                    subject = alpha > 0.02
         elif min(bg) < 0.5:
             if bg[0] >= bg[1] and bg[0] >= bg[2] and bg[2] > 0.5 * bg[0]:
                 # magenta family: both r and b elevated -> clamp them to g.
